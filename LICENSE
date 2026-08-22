@@ -1,0 +1,28 @@
+Apache License 2.0
+
+Copyright 2026 the lgv60-dualscreen-lineageos contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+
+SCOPE. This license covers the original work in this repository only.
+
+It does NOT cover:
+
+  * src/com/android/server/display/SubLcdController.java, which is derived from LG
+    Electronics' stock services.jar (decompiled and adapted).
+  * Any LG Electronics proprietary binary (vendor.lge.hardware.* HAL services and
+    libraries). Those are not distributed in this repository; see tools/extract-blobs.sh.
+
+Those files remain the property of their respective copyright holders.

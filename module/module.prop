@@ -1,0 +1,6 @@
+id=lge_ds2_hal_shim
+name=LG V60 Dual Screen (DS2) HAL Shim
+version=v3.0
+versionCode=12
+author=v60-re
+description=Deploys the stock LG dual-screen, accessory and coverdisplay HIDL HALs onto LineageOS with their vendor library closures and VINTF fragments, plus DualScreenBridgeDaemon (exposes IDisplayManagerEx as "dualscreen_ex") and CoverDisplayPowerBridge (a port of stock CoverDisplayPowerManagerService, giving hinge-driven DS2 power sequencing). Cover window works; the DP link to the DS2 main panel remains unresolved.

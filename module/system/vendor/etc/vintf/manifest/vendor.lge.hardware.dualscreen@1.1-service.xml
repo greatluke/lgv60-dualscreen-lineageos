@@ -1,0 +1,20 @@
+<!--
+    VINTF fragment for the lge_ds2_hal_shim Magisk module.
+
+    Use ONLY <fqname>. Do NOT also include <version> plus <interface><instance>: together
+    they declare the same interface twice, and VINTF rejects the fragment with
+    "Duplicated ... in <interface><instance> and <fqname>". Stock manifest.xml carries both
+    forms legally because assemble_vintf normalizes it at build time; a hand-placed fragment
+    is not normalized, so copying stock verbatim breaks it.
+
+    Also: one fqname per major version per <hal>, and no double hyphen inside a comment.
+    Any illformed fragment invalidates the ENTIRE device manifest, so every HAL on the
+    device stops resolving and it hangs at the LG splash. Cost two hung boots on 2026-08-22.
+-->
+<manifest version="9.0" type="device">
+    <hal format="hidl">
+        <name>vendor.lge.hardware.dualscreen</name>
+        <transport>hwbinder</transport>
+        <fqname>@1.1::IDualScreen/default</fqname>
+    </hal>
+</manifest>

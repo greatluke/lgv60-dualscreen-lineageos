@@ -1,0 +1,6 @@
+build/
+*.zip
+module/dualscreen-bridge.dex
+# Proprietary LG blobs are never committed -- see tools/extract-blobs.sh
+module/system/vendor/bin/
+module/system/vendor/lib64/
