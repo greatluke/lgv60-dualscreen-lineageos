@@ -204,8 +204,8 @@ open item, since the failure currently requires a reboot to clear.
 
 ## Building
 
-This repository does **not** contain LG's proprietary binaries. You supply them from firmware you
-own:
+This repository does **not** contain LG's proprietary binaries (the release archive does — see
+*Licensing and contents*). To build from source you supply them from firmware you own:
 
 ```sh
 ./tools/extract-blobs.sh /path/to/mounted/stock/vendor   # or: --adb, from a stock-running device
@@ -240,8 +240,12 @@ docs/       the full reverse-engineering write-up and raw evidence
 - `SubLcdController.java` is **derived from LG's stock `services.jar`** (decompiled and adapted).
   It is included because the bridge cannot work without it. It is not original work and is not
   covered by that license.
-- The HAL binaries and `vendor.lge.hardware.*` libraries are **LG proprietary** and are
-  deliberately not distributed here.
+- The HAL binaries and `vendor.lge.hardware.*` libraries are **LG proprietary**. They are not
+  committed to this repository — the git tree contains no blobs — but the **release archive
+  bundles them** so the module is installable without extracting them yourself. They remain LG's
+  copyrighted work and are not covered by the license above. If you would rather not use a
+  redistributed copy, [`tools/extract-blobs.sh`](tools/extract-blobs.sh) pulls them from firmware
+  you own and `tools/build.sh` assembles an equivalent zip.
 
 ## Credits
 
