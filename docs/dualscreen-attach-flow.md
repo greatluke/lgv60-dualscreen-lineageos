@@ -2,45 +2,106 @@
 
 ---
 
-## PROJECT STATUS (frozen 2026-08-22) — read before reopening anything
+## PROJECT STATUS (updated 2026-08-22, evening) — read before reopening anything
 
 ```text
-Problem A — DS2 framework / userspace integration ........... SOLVED
-Problem B — DS2 DP/AUX link to the main panel ............... UNRESOLVED (closed to further
-                                                              phone-side software probing)
+Problem A — DS2 attach reliability (-108) .................. ROOT-CAUSED, fix built, untested
+Problem B — DS2 DP link to the main panel .................. SOLVED
+Framework / userspace integration .......................... SOLVED and shipping
 ```
 
-**Problem A, solved and shipping.** DS2 detection, USB enumeration, `DS_Ready`, the native HAL
-stack (`dualscreen@1.1`, `accessory@1.1` + `uevent@1.2`, `coverdisplay@1.0`), HIDL registration,
-the `IDisplayManagerEx` framework bridge (`dualscreen_ex`), the cover-window pixel path, and the
-hinge/accessory power sequencing are all working and auto-starting at boot via the
-`lge_ds2_hal_shim` Magisk module.
+**This block replaces an earlier "frozen / Problem B UNRESOLVED" status. That status was an
+artifact of a measurement error, described below. Do not restore it.**
 
-**Problem B, unresolved.** The DP link to the DS2's main panel never completes: every AUX
-transaction times out (`DP_AUX_ERR_TOUT`, `isr=0x200`).
+### Problem B — SOLVED
 
-Evidence, from controlled A/B on the **same phone, same kernel, same boot**:
+The DP link to the DS2 main panel comes up completely on the daily driver (stock LOS kernel +
+`lge_ds2_hal_shim` v0.1): `card0-DP-1: connected`, `extcon6 DP=1`, SINK DPCD read, `EDID read
+successed`, `bw_code=10 lane_count=2`, both link-training phases successful, `DP_STATE_ENABLED`.
+Android enumerates a 1080x2460@60 external display; mirror and desktop mode both work.
+
+**Why it looked unsolvable for so long.** The *test* phone had an experimental un-inverted
+`aux-sel` patch flashed into `techpack/display/msm/dp/dp_power.c`. Every AUX measurement taken on
+that phone after that flash used the wrong polarity, producing a permanent, perfectly
+reproducible `DP_AUX_ERR_TOUT` that was mistaken for a deep unsolved defect. The source was
+reverted at 16:11 but the phone was still running a kernel built at 15:44, so the confound
+survived invisibly. It announced itself in the log the whole time:
 
 ```text
-HPD assertion reproduced (AT%HPD Off -> On, via the real Stock HIDL path)
-DP state machine enters CONFIGURED | INITIALIZED | READY | CONNECTED
-PHY configuration byte-identical between working and failing paths
-mux / GPIO / regulator / VDM / aux-switch configuration identical
-Stock's full userspace orchestration reproduced, correct order and timing
-external DP sink on the same boot -> AUX succeeds (DPCD + EDID read OK)
-DS2                               -> AUX timeout, 100%
+ds3 connected. RE-DEBUG: testing un-inverted aux-sel=1
 ```
 
-**What this does and does not establish.** It does *not* prove there is no software bug anywhere
-on the phone. It establishes that **the software-visible initialization path we are able to
-compare no longer produces a measurable Stock-vs-LOS difference.** The failure now sits below the
-layer this instrumentation can distinguish.
+**Lesson worth keeping:** when a failure is 100% reproducible on one device and absent on
+another, check what is actually *flashed* on each — compare `/proc/version` build time against
+the source revert time — before theorising about the failure itself.
 
-Remaining categories are **hypotheses, not conclusions**: DS2-side DP receiver state/protocol,
-undocumented DP controller state, board-level signaling interaction, or firmware/kernel
-interaction not exposed through registers. Given that the DS2's MCU is responsive, HPD can be
-asserted, and the same host talks to a normal sink successfully, **do not invent further
-phone-side software explanations without a new piece of evidence.**
+### Problem A — root-caused (dwc3 workqueue deadlock)
+
+Symptom: DS2 intermittently fails to enumerate, `hub failed to enable device, error -108`
+repeating, `lge_ds3` looping `DS_USB_Wait -> DS_Recovery_*` forever, and only a reboot clears it.
+
+Proven from live kernel stacks via `echo w > /proc/sysrq-trigger`:
+
+```text
+kworker/u16:10 +k_sm_usb   D    kworker/u16:11 +dwc3_wq   D
+  dwc3_otg_sm_work                Workqueue: dwc3_wq dwc3_resume_work
+  dwc3_otg_start_host             dwc3_resume_work
+  dwc3_host_exit                  dwc3_ext_event_notify
+  xhci_plat_remove                flush_delayed_work
+  usb_remove_hcd                  __flush_work
+  usb_disconnect                  wait_for_completion   <-- blocked on the left-hand worker
+  usb_disable_device
+  hub_disconnect
+  hub_quiesce
+  flush_delayed_work
+  wait_for_completion             <-- blocked
+```
+
+Causal chain, all timestamps from one capture:
+
+```text
+DS2 attached at power-on -> lge_ds3 reaches DS_Startup at 1.041s
+  ds_dp_config(): usbpd_find_dp_handler() == NULL  ("No DP handler found") at 1.041240
+  ...because dp_display_probe() only lands at     1.045274   <-- a 4 ms miss
+  error path: start_2nd_usb_host(1.041164) then stop_2nd_usb_host(1.041246), 82us apart
+  dwc3 sees host:1 then host:0 -> host ON at 1.041361, xhci registers 1.096, host OFF 1.099259
+  xhci teardown runs while the hub is still enumerating the DS2
+  hub_quiesce() blocks forever -> sm_work wedged
+  dwc3_resume_work blocks in flush_delayed_work(&mdwc->sm_work) at 1.108273 and never returns
+  dwc3_wq is alloc_ordered_workqueue(..., 0) -> max_active 1 -> everything behind it never runs
+  all later host:1/host:0 events are accepted by the notifier and silently never processed
+  every attach thereafter fails -108, until reboot
+```
+
+Note the notifier's `host:%ld (id:%d) event received` print sits *after* its
+`if (mdwc->id_state == id) return` guard, so each of those lines proves `queue_work()` really was
+called — the work simply never ran.
+
+**Corrected earlier claim.** A previous model held that `dwc3_otg_start_host()` was never called
+and xHCI stayed halted. That is wrong: `start_host` is called exactly twice (on, then off) and
+xhci is alive and retrying. The failure is a deadlock, not a missing call. `UsbService host` and
+`dualscreen@1.1-service` also end up in D state behind it, which is the "phone seems to hang"
+symptom.
+
+**Fix (built, not yet validated on hardware):** `drivers/usb/misc/lge_ds3.c` now treats `-ENODEV`
+from `ds_dp_config()` as "DP handler not up yet" and re-kicks the state machine
+(`DS_DP_CONFIG_RETRY_MS` 50ms, `DS_DP_CONFIG_MAX_RETRY` 40 = 2s budget against a ~4ms race)
+instead of running the teardown path. Any other error still takes the original path.
+
+**Validation still owed:** boot with the DS2 attached from power-on and confirm (a) the
+`DP handler not ready, retry N/40` line appears, (b) `ds_dp_config` then succeeds, (c) no
+`stop_2nd_usb_host` immediately follows `start_2nd_usb_host`, (d) `DS_Ready` is reached, and
+(e) `sysrq-w` shows no D-state `k_sm_usb`/`dwc3_wq` workers.
+
+### Reading the kernel log on these devices
+
+`dmesg` returns empty (not a permissions problem — `dmesg_restrict` is 0). Piping `/dev/kmsg`
+straight over adb truncates after a fraction of a second of boot. What works:
+
+```sh
+adb shell "su -c 'timeout 45 cat /dev/kmsg > /data/local/tmp/kmsg_full.txt'"
+adb pull /data/local/tmp/kmsg_full.txt
+```
 
 **Framework port shipped**: `CoverDisplayPowerBridge` (in `dualscreen-bridge.dex`, started by
 `DualScreenBridgeDaemon`) is a working LOS port of Stock's `CoverDisplayPowerManagerService`. It
@@ -3201,6 +3262,57 @@ re-init the host controller -- the fault is host-side, not accessory-side.
 Note the diagnostic asymmetry: the daily driver has no custom kernel, so a failure there produces
 only the symptom, not the `RE-DEBUG dwc3_resume_work` lines. Diagnose on the instrumented test
 phone.
+
+### PROBLEM B SOLVED: DP comes up on a stock LineageOS kernel
+
+On 2026-08-22 the DS2 main panel came up on the **daily driver** (second V60, serial
+`LMV600TMff3529c1`), running a **completely stock LineageOS kernel** plus the
+`lge_ds2_hal_shim` module. Android prompted for desktop-vs-mirror mode.
+
+```
+card0-DP-1: connected            extcon6: DP=1
+[drm-dp] SINK DPCD: 12 0a c2 01 01 00 01 00 02 02 04 00 00 00 00 00
+dp_panel_read_dpcd: version:1.2, rate:270000, lanes:2
+dp_panel_read_edid 2034 EDID read successed, count=1
+dp_ctrl_on: bw_code=10, lane_count=2
+link training #1 successful
+link training #2 successful
+dp_display_enable: add DP_STATE_ENABLED
+```
+
+That matches Stock's recorded success trace line for line. Android enumerates the panel as
+`"HDMI Screen"`, `1080x2460 @60`, `type=EXTERNAL`, `(organized)` in WindowManager. Its mode list
+also exposes `1148x2460` (span/wide) and `256x204` / `256x549` (cover-window geometries).
+
+**Why it had never worked on the test phone.** The test phone was running a kernel built with the
+`dp_power.c` experiment still applied -- the DS2 `aux-sel` inversion removed, so the pin was
+driven `1` instead of Stock's `0`. That experiment was reverted in source but never rebuilt or
+reflashed, so every AUX measurement on that phone after it was taken with the wrong polarity.
+
+This invalidates the earlier conclusion that `aux-sel` polarity "is not the cause". That test was
+run with no LG HALs deployed and the DS2 unpowered (`AT%HPD` Off), so AUX could not have
+succeeded regardless of polarity -- the outcome could not distinguish the variable being tested.
+The external-sink A/B still worked on that phone because an external sink does not go through the
+`is_ds_connected()` inversion at all.
+
+**Working conclusion (not yet confirmed by a controlled retest):** DS2 DP requires *both*
+(a) the accessory powered and HPD asserted, which the module now does via
+`IAccessory.setCoverDisplayButtonStatus()` -> native `setPowerStatus()`, and (b) `aux-sel` at
+Stock polarity. The daily driver has both; the test phone had only (a). Confirming this properly
+means rebuilding the test phone's kernel from the reverted source and re-testing.
+
+### DS2 main-panel brightness: use the HAL, not the backlight node
+
+`/sys/class/backlight/panel0-backlight-ex` looks like the DS2 backlight and accepts writes, but
+it is **vestigial**: after `echo 365 > brightness`, `actual_brightness` still reads `0`, i.e. the
+driver never applies it. No visible change on the panel either.
+
+The working path is the HAL: `IDualScreen.setBrightness(level)` returns 0 and visibly changes the
+DS2 panel. `IDualScreen.setDSBrightnessOffset(offset)` is the accompanying trim. (`AT%DB` as a
+bare query returns `status=1`; like the other `AT%` verbs it is a setter, not a query.)
+
+Note `panel0-backlight` (no `-ex`) is the main screen and reads a live value, so the two nodes are
+easy to confuse.
 
 ### Explicitly not in scope
 

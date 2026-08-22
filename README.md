@@ -1,7 +1,7 @@
 # LG Dual Screen (DS2) on LineageOS — LG V60 ThinQ
 
-Brings LG's Dual Screen accessory partly back to life on LineageOS for the LG V60 ThinQ
-(`timelm`), as a Magisk module.
+Brings LG's Dual Screen accessory back to life on LineageOS for the LG V60 ThinQ (`timelm`), as
+a Magisk module: both the cover window and the second screen itself.
 
 LineageOS ships none of LG's dual-screen userspace, so out of the box the DS2 does nothing: the
 kernel enumerates it over USB and then stalls, because the process that would take it further
@@ -17,6 +17,8 @@ kernel enumerates it over USB and then stalls, because the process that would ta
   weekday/date, battery percentage with a proportional battery icon, and a no-SIM indicator
 - **Hinge-driven power sequencing**: unfolding the case powers the accessory up, folding it
   powers it down, automatically
+- **The DS2's main panel** — the DisplayPort link comes up and Android enumerates the second
+  screen as a 1080x2460@60 external display. Both mirror and desktop mode work.
 - Everything starts automatically at boot
 
 
@@ -31,40 +33,56 @@ Running on LineageOS 23.2 (Android 16):
 
 ![LineageOS version](images/android_version.png)
 
-The kernel string in that screenshot ends in `-dirty` because this particular unit runs a
-debug-instrumented kernel used during the investigation. **The module does not require it** —
-every change in that kernel is diagnostic logging. The module is confirmed working on a second
-V60 running a completely stock LineageOS kernel.
+The kernel string in that screenshot ends in `-dirty` because that unit runs a debug kernel used
+during the investigation. **The module does not require it** — it is confirmed working on a
+second V60 running a completely stock LineageOS kernel.
 
-## What does not work
+(An earlier version of this note claimed every change in that kernel was diagnostic logging. That
+was not true at the time: it also carried an experimental `aux-sel` polarity patch, and that
+patch is exactly what made the second screen look permanently broken. See below.)
 
-**The DS2's main panel stays blank.** This is the honest headline limitation.
+## What does not work yet
 
-The DisplayPort link to the second screen never completes: HPD is asserted, the DP state machine
-reaches `CONFIGURED | INITIALIZED | READY | CONNECTED`, the PHY is programmed identically to
-stock — and then every AUX transaction times out (`DP_AUX_ERR_TOUT`).
+With the second screen in **desktop mode**, some integration is still missing:
 
-This was investigated extensively and is **unresolved**. Notably, on the same phone, same kernel
-and same boot, an external DisplayPort sink completes DPCD and EDID reads successfully, so the
-DP controller, PHY and AUX engine all work; the failure is specific to the DS2 path. Every
-software-visible difference we could compare — mux routing, GPIOs, regulators, VDM negotiation,
-PHY registers, and the full stock userspace call sequence — is identical between the working and
-failing cases.
+- Touch input on the DS2 is not yet routed to it (an IDC file binding the digitizer to the
+  external display is included but not yet confirmed working)
+- Launching apps directly onto the second screen needs the `INTERNAL_SYSTEM_WINDOW` signature
+  permission, which root alone does not grant
+- DS2 brightness is not yet tied to the main screen's brightness
 
-See [`docs/dualscreen-attach-flow.md`](docs/dualscreen-attach-flow.md) for the full
-investigation, including a long list of hypotheses that were tested and ruled out. If you are
-thinking of picking this up, please read the frozen status block at the top of that file first —
-it will save you re-deriving several dead ends.
+Earlier revisions of this README described the main panel as permanently blank. That was wrong,
+and worth recording why: the development phone had an experimental `aux-sel` polarity patch
+flashed into its kernel, which produced a perfectly reproducible AUX timeout that was mistaken
+for an unsolvable defect. The source had been reverted but the phone had not been reflashed. See
+[`docs/dualscreen-attach-flow.md`](docs/dualscreen-attach-flow.md).
 
 ## Known issue: intermittent attach
 
 The DS2 sometimes fails to enumerate, leaving `hub failed to enable device, error -108` in the
 kernel log. **Workaround: reboot.** Nothing lighter is known to clear it.
 
-Root cause is traced but unfixed: `dwc3_otg_start_host()` is never invoked for the second USB
-controller, so xHCI is never re-initialised and keeps stale halted state. It reproduces on a
-completely stock LineageOS kernel, on two different phones, so it is inherent to LineageOS on
-this device rather than caused by anything here.
+Root cause is now known, and it is a **kernel workqueue deadlock**, confirmed from live blocked-task
+stacks rather than inferred:
+
+When the DS2 is already attached at power-on, `lge_ds3` reaches `DS_Startup` at ~1.041s, but
+`dp_display_probe()` only registers the DisplayPort USBPD SVID handler at ~1.045s. That 4ms miss
+makes `ds_dp_config()` return `-ENODEV`, and its error path calls `stop_2nd_usb_host()` just 82µs
+after `start_2nd_usb_host()`. dwc3 therefore tears the xHCI host down while the hub is still
+enumerating the DS2; `hub_quiesce()` blocks forever, `dwc3_otg_sm_work` wedges, and
+`dwc3_resume_work` then blocks flushing it. Because `dwc3_wq` is an *ordered* workqueue, every
+subsequent USB ID event is queued behind the blocked one and never runs — so the controller is
+permanently deaf until reboot.
+
+A fix is included as a kernel patch — [`kernel/0001-lge_ds3-retry-ds_dp_config-on-ENODEV.patch`](kernel/0001-lge_ds3-retry-ds_dp_config-on-ENODEV.patch)
+— which retries across the registration window instead of tearing the host down. It is **not part
+of the Magisk module**: the module runs fine on a stock kernel, and this bug is not reachable from
+userspace.
+
+**The patch is built and verified to apply cleanly, but is not yet confirmed on hardware.** Treat
+it as unproven. The raw evidence is in
+[`docs/problem-a-blocked-tasks.txt`](docs/problem-a-blocked-tasks.txt); reproduction and
+verification steps are in [`kernel/README.md`](kernel/README.md).
 
 ## Installing
 
@@ -86,9 +104,11 @@ adb shell su -c 'tail -20 /data/local/tmp/ds2_shim.log'
 Fold the case shut and the cover window should show the clock.
 
 **If it hangs at the LG logo**: power off, then hold Volume Down from the moment the logo appears
-until the boot animation — that is Magisk safe mode and disables all modules for one boot. adb
-also stays reachable during such a hang, so you can `touch /data/adb/modules/lge_ds2_hal_shim/disable`
-remotely instead.
+until the boot animation — that is Magisk safe mode and disables all modules for one boot.
+
+A hang caused by a malformed VINTF fragment happens late enough that `adbd` is running, so you can
+often `touch /data/adb/modules/lge_ds2_hal_shim/disable` over adb instead. Do not rely on that in
+general: a failure earlier in boot leaves no adb at all, and safe mode is the only way back.
 
 ## Building
 
@@ -106,6 +126,19 @@ extract them from an LG KDZ firmware image rather than from the running device.
 
 `build.sh` compiles the Java bridge, dexes it, validates the VINTF fragments and shell scripts,
 and assembles the zip. See the comments in it for the two environment variables you need to set.
+
+The optional kernel patch under [`kernel/`](kernel/) is built separately against a LineageOS
+`timelm` kernel tree — see [`kernel/README.md`](kernel/README.md).
+
+### Repository layout
+
+```text
+module/     the Magisk module: scripts, VINTF fragments, init .rc files, IDC
+src/        the framework bridge (Java, compiled to dualscreen-bridge.dex)
+tools/      blob extraction and the module build
+kernel/     optional kernel patch for the intermittent-attach deadlock
+docs/       the full reverse-engineering write-up and raw evidence
+```
 
 ## Licensing and contents
 
@@ -125,3 +158,8 @@ Reverse-engineered from stock LG firmware by inspecting the HAL binaries, decomp
 real hardware. The key discovery for the power path was that
 `CoverDisplayPowerManagerService` — absent from LineageOS entirely — drives
 `IAccessory.setCoverDisplayButtonStatus()`, which makes the accessory HAL natively power the DS2.
+
+The attach-reliability bug was then root-caused by reading blocked-task stacks out of a live,
+wedged kernel rather than by reasoning about the driver source, which is what finally
+distinguished a deadlock from the "controller never started" theory that had held for a long time
+and was wrong.

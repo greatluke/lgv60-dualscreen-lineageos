@@ -57,6 +57,11 @@ sh -n "$MODULE/ds2_supervise.sh"
 missing=$(find "$MODULE/system/vendor" -name '*.so' | wc -l)
 [ "$missing" -ge 13 ] || { echo "Only $missing libs present -- run ./tools/extract-blobs.sh first" >&2; exit 1; }
 
+# The IDC binds the DS2 digitizer to the external display; without it touch lands on the
+# built-in screen and the second screen looks unresponsive.
+[ -f "$MODULE/system/vendor/usr/idc/Vendor_1004_Product_637a.idc" ] \
+	|| { echo "missing DS2 touchscreen IDC" >&2; exit 1; }
+
 echo "== packaging =="
 rm -f "$ZIP"
 (cd "$MODULE" && zip -r -X "$ZIP" . -x '.*') > /dev/null

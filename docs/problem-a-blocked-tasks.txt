@@ -1,0 +1,74 @@
+Problem A -- blocked-task evidence
+=================================
+
+Captured on an LG V60 (timelm) running LineageOS, with the Dual Screen attached at power-on and
+the attach failure active (repeated "hub failed to enable device, error -108"), via:
+
+    adb shell "su -c 'echo 1 > /proc/sys/kernel/sysrq; echo w > /proc/sysrq-trigger'"
+
+Both workers were still blocked ~733 seconds into the boot, i.e. permanently.
+
+Read it as a pair. k_sm_usb is stuck tearing xHCI down inside hub_quiesce(); dwc3_wq is stuck
+waiting for exactly that work to finish, in the flush_delayed_work() at the top of
+dwc3_ext_event_notify(). dwc3_wq is an ordered workqueue (max_active 1), so every later USB ID
+event queues behind the blocked item and never runs.
+
+Timestamps and the full causal chain: see dualscreen-attach-flow.md.
+
+----------------------------------------------------------------------
+
+ret_from_fork+0x10/0x18
+kworker/u16:10  D    0   368      2 0x00000028
+Workqueue: k_sm_usb dwc3_otg_sm_work.bffd34ec1d25d3e10f9b11c05ab92aee.cfi_jt
+Call trace:
+__switch_to+0x128/0x144
+__schedule+0xa00/0xb30
+schedule+0x74/0x98
+schedule_timeout+0x50/0x680
+wait_for_common+0xcc/0x168
+wait_for_completion+0x18/0x24
+__flush_work.llvm.12114474853055562320+0x234/0x2b4
+flush_delayed_work+0x40/0x54
+hub_quiesce+0x6c/0xac
+hub_disconnect+0x3c/0x138
+usb_unbind_interface+0xd0/0x268
+device_release_driver_internal+0x184/0x2a4
+bus_remove_device+0x114/0x140
+device_del+0x2b4/0x510
+usb_disable_device+0x7c/0x174
+usb_disconnect+0xec/0x370
+usb_remove_hcd+0xd8/0x2c0
+xhci_plat_remove+0x74/0x1a4
+platform_drv_remove+0x44/0x94
+device_release_driver_internal+0x184/0x2a4
+bus_remove_device+0x114/0x140
+device_del+0x2b4/0x510
+platform_device_unregister+0x2c/0xac
+--
+ret_from_fork+0x10/0x18
+kworker/u16:11  D    0   370      2 0x00000028
+Workqueue: dwc3_wq dwc3_resume_work.bffd34ec1d25d3e10f9b11c05ab92aee.cfi_jt
+Call trace:
+__switch_to+0x128/0x144
+__schedule+0xa00/0xb30
+schedule+0x74/0x98
+schedule_timeout+0x50/0x680
+wait_for_common+0xcc/0x168
+wait_for_completion+0x18/0x24
+__flush_work.llvm.12114474853055562320+0x234/0x2b4
+flush_delayed_work+0x40/0x54
+dwc3_ext_event_notify+0x20/0x340
+dwc3_resume_work+0x168/0x3bc
+process_one_work+0x210/0x57c
+worker_thread+0x270/0x4e8
+kthread+0x154/0x18c
+ret_from_fork+0x10/0x18
+hdcp_2x         D    0   592      2 0x00000028
+Call trace:
+__switch_to+0x128/0x144
+__schedule+0xa00/0xb30
+schedule+0x74/0x98
+sde_hdcp_2x_main+0xc4/0x744
+kthread+0x154/0x18c
+ret_from_fork+0x10/0x18
+dp_hdcp2p2      D    0   593      2 0x00000028

@@ -26,12 +26,24 @@ HAL_DUALSCREEN=/vendor/bin/hw/vendor.lge.hardware.dualscreen@1.1-service
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
+# True once the system has started shutting down or rebooting.
+#
+# This matters: on a graceful shutdown init kills services and waits for them to STAY dead.
+# A supervisor that faithfully restarts them holds the shutdown open forever, which showed up
+# as "reboot from the power menu never completes" (adb reboot still worked, being more
+# forceful). Every restart loop below must therefore stop as soon as shutdown begins.
+shutting_down() {
+	[ -n "$(getprop sys.shutdown.requested)" ] && return 0
+	[ -n "$(getprop sys.powerctl)" ] && return 0
+	return 1
+}
+
 # Match on the full binary path: each HAL's argv[0] contains it, while this script's argv
 # does not, which avoids the classic pgrep -f self-match.
 running() { pgrep -f "^$1" > /dev/null 2>&1; }
 
 [ -f "$LOG" ] && [ "$(stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 262144 ] && rm -f "$LOG"
-log "=== supervisor start (v$(grep '^version=' "$MODDIR/module.prop" | cut -d= -f2)) ==="
+log "=== supervisor start ($(grep '^version=' "$MODDIR/module.prop" | cut -d= -f2)) ==="
 
 # Safe to wait here: we are detached, so boot proceeds independently.
 i=0
@@ -54,6 +66,10 @@ supervise() {
 	(
 		fails=0
 		while true; do
+			if shutting_down; then
+				log "$label supervisor exiting: shutdown in progress"
+				exit 0
+			fi
 			if ! running "$bin"; then
 				log "starting $label"
 				start_ts=$(date +%s)
@@ -120,6 +136,10 @@ fi
 (
 	fails=0
 	while true; do
+		if shutting_down; then
+			log "bridge supervisor exiting: shutdown in progress"
+			exit 0
+		fi
 		if ! pgrep -f "$BRIDGE_CLASS" > /dev/null 2>&1; then
 			log "starting bridge daemon"
 			start_ts=$(date +%s)
