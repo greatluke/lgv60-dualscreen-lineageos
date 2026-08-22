@@ -39,13 +39,11 @@ second V60 running a completely stock LineageOS kernel.
 
 ## What does not work yet
 
-With the second screen in **desktop mode**, some integration is still missing:
+The second screen lights up and is usable, but stock does considerably more with it. In short:
+touch is not yet routed to the DS2, apps cannot be launched directly onto it, and its brightness
+is not tied to the main screen's.
 
-- Touch input on the DS2 is not yet routed to it (an IDC file binding the digitizer to the
-  external display is included but not yet confirmed working)
-- Launching apps directly onto the second screen needs the `INTERNAL_SYSTEM_WINDOW` signature
-  permission, which root alone does not grant
-- DS2 brightness is not yet tied to the main screen's brightness
+See [TO-DO](#to-do--reaching-parity-with-stock) for the full gap list and what each would take.
 
 
 ## Known issue: intermittent attach
@@ -129,6 +127,80 @@ With that set, attaching the Dual Screen brings up the display prompt:
 Both panels running under LineageOS, the DS2 on the left showing the clock:
 
 ![Dual Screen running on LineageOS](images/dualscreen_on_los.jpg)
+
+## TO-DO — reaching parity with stock
+
+The module currently gets the DS2 *lit and usable*. Stock does considerably more. This is what
+is missing, roughly in order of how tractable it looks.
+
+Everything below is reachable through HAL methods the module **already has running** unless noted
+— `lshal` shows the full `IDualScreen` surface, and much of it is simply not called yet.
+
+### 1. Touch input on the second screen
+
+An IDC (`module/system/vendor/usr/idc/Vendor_1004_Product_637a.idc`) binds the digitizer
+(`1004:637a`) to the external display via `touch.displayId = local:4`. **Written but not yet
+confirmed working.**
+
+```sh
+dumpsys input | grep -A3 "LGE LMV600N"   # want AssociatedDisplay isExternal=true, non-empty displayId
+```
+
+If the binding alone is not enough, `IDualScreen` also exposes `DoTouchReset()` and
+`set_touch_perf()`, neither of which the bridge calls. The `local:4` unique id should be
+confirmed rather than assumed — it may vary.
+
+### 2. Brightness
+
+`IDualScreen` exposes `setBrightness()`, `setSubDisplayBrightness()` and
+`setDSBrightnessOffset()`. `setBrightness()` is known to work when called directly; nothing wires
+it to the system brightness yet, so the DS2 sits at whatever level it powered on with.
+
+The main panel's live value is readable from `panel0-backlight`. Note `panel0-backlight-ex` is
+vestigial — it accepts writes and `actual_brightness` stays 0, so it is not the path.
+
+Needs: track main-screen brightness in `CoverDisplayPowerBridge` and mirror it, plus honour the
+offset so the two panels match perceptually.
+
+### 3. Launching apps onto the DS2
+
+`am start --display N` requires the `INTERNAL_SYSTEM_WINDOW` signature permission. **Root does not
+satisfy it** — this is the one item here that cannot be solved from a Magisk module alone. Options,
+none yet attempted:
+
+- a small system-signed helper APK (needs a signature the platform accepts)
+- a Xposed/LSPosed module hooking the launch path
+- patching `services.jar` directly
+
+### 4. Display geometry
+
+`getCoverDisplayCutout()` and `getSubDisplayInfo()` are unused. Stock uses these to describe the
+DS2's cutout and dimensions to the window manager. Without them, layout on the second screen is
+whatever Android infers from a generic external display.
+
+### 5. Rotation and orientation
+
+Stock keeps the two panels' orientation coupled and rotates the DS2 sensibly when the phone is
+turned. Nothing here handles that; the IDC sets `touch.orientationAware = 1` but the display side
+is untouched.
+
+### 6. Wide mode / spanning
+
+Stock can treat both panels as one logical surface for apps that support it
+(`getWideScreenMode()` appears in the framework surface). Not investigated at all.
+
+### 7. Ergonomics stock has and this does not
+
+- swapping the running app between panels with a gesture
+- a launcher/home experience on the DS2 rather than whatever Android puts there
+- LG's Dual Screen settings UI
+- the virtual gamepad overlay
+
+### 8. Attach reliability
+
+See *Known issue* above. The kernel patch in [`kernel/`](kernel/) is written and builds but is
+**not yet confirmed on hardware**; validating it (or disproving it) is the single highest-value
+open item, since the failure currently requires a reboot to clear.
 
 ## Building
 
