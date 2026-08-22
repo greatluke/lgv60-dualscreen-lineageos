@@ -37,10 +37,6 @@ The kernel string in that screenshot ends in `-dirty` because that unit runs a d
 during the investigation. **The module does not require it** — it is confirmed working on a
 second V60 running a completely stock LineageOS kernel.
 
-(An earlier version of this note claimed every change in that kernel was diagnostic logging. That
-was not true at the time: it also carried an experimental `aux-sel` polarity patch, and that
-patch is exactly what made the second screen look permanently broken. See below.)
-
 ## What does not work yet
 
 With the second screen in **desktop mode**, some integration is still missing:
@@ -51,11 +47,6 @@ With the second screen in **desktop mode**, some integration is still missing:
   permission, which root alone does not grant
 - DS2 brightness is not yet tied to the main screen's brightness
 
-Earlier revisions of this README described the main panel as permanently blank. That was wrong,
-and worth recording why: the development phone had an experimental `aux-sel` polarity patch
-flashed into its kernel, which produced a perfectly reproducible AUX timeout that was mistaken
-for an unsolvable defect. The source had been reverted but the phone had not been reflashed. See
-[`docs/dualscreen-attach-flow.md`](docs/dualscreen-attach-flow.md).
 
 ## Known issue: intermittent attach
 
@@ -109,6 +100,35 @@ until the boot animation — that is Magisk safe mode and disables all modules f
 A hang caused by a malformed VINTF fragment happens late enough that `adbd` is running, so you can
 often `touch /data/adb/modules/lge_ds2_hal_shim/disable` over adb instead. Do not rely on that in
 general: a failure earlier in boot leaves no adb at all, and safe mode is the only way back.
+
+## Using the second screen
+
+**Desktop mode must be enabled in Developer options first.** Without it the second screen is
+only offered as a mirror, and Android will not treat it as a display that can host its own
+windows.
+
+Settings → System → Developer options → **Force desktop mode on secondary displays**, then
+reboot. Equivalent over adb:
+
+```sh
+adb shell settings put global force_desktop_mode_on_external_displays 1
+adb reboot
+```
+
+(The exact wording of the toggle varies a little between LineageOS builds — look for "desktop
+mode" among the developer options. The `settings` key above is the one that actually matters.)
+
+With that set, attaching the Dual Screen brings up the display prompt:
+
+![Connect to external display prompt](images/external_display.png)
+
+- **Mirror** duplicates the main screen. This works well.
+- **Desktop** treats the DS2 as an independent display. The display itself works, but see
+  *What does not work yet* above — touch routing and launching apps onto it are still incomplete.
+
+Both panels running under LineageOS, the DS2 on the left showing the clock:
+
+![Dual Screen running on LineageOS](images/dualscreen_on_los.jpg)
 
 ## Building
 
