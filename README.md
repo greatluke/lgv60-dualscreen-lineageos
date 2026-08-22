@@ -19,6 +19,23 @@ kernel enumerates it over USB and then stalls, because the process that would ta
   powers it down, automatically
 - Everything starts automatically at boot
 
+
+## Screenshots
+
+The cover window on LineageOS — clock, weekday/date, battery percentage with a proportional
+battery icon, and a no-SIM indicator (this unit has no SIM installed):
+
+![DS2 cover window running on LineageOS](images/front_cover.jpg)
+
+Running on LineageOS 23.2 (Android 16):
+
+![LineageOS version](images/android_version.png)
+
+The kernel string in that screenshot ends in `-dirty` because this particular unit runs a
+debug-instrumented kernel used during the investigation. **The module does not require it** —
+every change in that kernel is diagnostic logging. The module is confirmed working on a second
+V60 running a completely stock LineageOS kernel.
+
 ## What does not work
 
 **The DS2's main panel stays blank.** This is the honest headline limitation.

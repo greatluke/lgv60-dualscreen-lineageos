@@ -44,7 +44,19 @@ public class CoverWindowRenderer {
     private final int[] mPixels = new int[WIDTH * HEIGHT];
 
     private final SimpleDateFormat mClockFmt = new SimpleDateFormat("HH:mm", Locale.US);
-    private final SimpleDateFormat mDateFmt  = new SimpleDateFormat("EEE, MMM d", Locale.US);
+
+    /**
+     * Date formats in preference order, longest first. The panel is only 256px wide and the
+     * clock takes most of it, so a fixed format overflows on longer dates -- "Sat, Aug 22" was
+     * clipped to "Sat, Aug 2". render() picks the first of these that actually fits the space
+     * left over, so this stays correct for every weekday/month combination.
+     */
+    private final SimpleDateFormat[] mDateFmts = {
+        new SimpleDateFormat("EEE, MMM d", Locale.US),
+        new SimpleDateFormat("EEE MMM d", Locale.US),
+        new SimpleDateFormat("MMM d", Locale.US),
+        new SimpleDateFormat("M/d", Locale.US),
+    };
 
     private boolean mRunning;
     private String mLastRendered;
@@ -132,7 +144,21 @@ public class CoverWindowRenderer {
     public void render() {
         Date now = new Date();
         String clock = mClockFmt.format(now);
-        String date = mDateFmt.format(now);
+
+        // Space left for the right-hand block, given the clock actually rendered.
+        final int CLOCK_SCALE = 4, SMALL_SCALE = 2;
+        final int LEFT_MARGIN = 6, GAP = 10, RIGHT_MARGIN = 4;
+        int blockX = LEFT_MARGIN + TinyFont.measure(clock, CLOCK_SCALE) + GAP;
+        int avail = WIDTH - blockX - RIGHT_MARGIN;
+
+        String date = mDateFmts[mDateFmts.length - 1].format(now);
+        for (SimpleDateFormat f : mDateFmts) {
+            String candidate = f.format(now);
+            if (TinyFont.measure(candidate, SMALL_SCALE) <= avail) {
+                date = candidate;
+                break;
+            }
+        }
         int battery = readInt(BATTERY_CAPACITY, -1);
         boolean charging = "Charging".equalsIgnoreCase(readString(BATTERY_STATUS, ""));
         boolean noSim = isSimAbsent();
@@ -146,13 +172,12 @@ public class CoverWindowRenderer {
         java.util.Arrays.fill(mPixels, BLACK);
 
         // Clock, scale 4 -> 20x28 px glyphs, vertically centred.
-        final int clockScale = 4;
+        final int clockScale = CLOCK_SCALE;
+        final int smallScale = SMALL_SCALE;
         int clockY = (HEIGHT - TinyFont.GLYPH_H * clockScale) / 2;
-        TinyFont.draw(mPixels, WIDTH, HEIGHT, 8, clockY, clock, clockScale, WHITE);
+        TinyFont.draw(mPixels, WIDTH, HEIGHT, LEFT_MARGIN, clockY, clock, clockScale, WHITE);
 
-        // Right-hand block, scale 2 -> 10x14 px glyphs.
-        final int smallScale = 2;
-        int right = 8 + TinyFont.measure(clock, clockScale) + 12;
+        int right = blockX;
         TinyFont.draw(mPixels, WIDTH, HEIGHT, right, 14, date, smallScale, WHITE);
 
         // Status row, laid out like Stock: [no-SIM] | NN% [battery]
