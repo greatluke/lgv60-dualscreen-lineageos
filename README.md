@@ -63,15 +63,15 @@ enumerating the DS2; `hub_quiesce()` blocks forever, `dwc3_otg_sm_work` wedges, 
 subsequent USB ID event is queued behind the blocked one and never runs — so the controller is
 permanently deaf until reboot.
 
-A fix is included as a kernel patch — [`kernel/0001-lge_ds3-retry-ds_dp_config-on-ENODEV.patch`](kernel/0001-lge_ds3-retry-ds_dp_config-on-ENODEV.patch)
-— which retries across the registration window instead of tearing the host down. It is **not part
-of the Magisk module**: the module runs fine on a stock kernel, and this bug is not reachable from
-userspace.
+A kernel-side fix exists — retry across the registration window instead of tearing the host down
+— but it is **deliberately not published yet**. It builds and applies cleanly, and has not been
+validated on hardware; publishing an untested kernel patch that people would flash is not worth
+the risk. It will go up once it has been properly tested.
 
-**The patch is built and verified to apply cleanly, but is not yet confirmed on hardware.** Treat
-it as unproven. The raw evidence is in
-[`docs/problem-a-blocked-tasks.txt`](docs/problem-a-blocked-tasks.txt); reproduction and
-verification steps are in [`kernel/README.md`](kernel/README.md).
+The raw evidence is in
+[`docs/problem-a-blocked-tasks.txt`](docs/problem-a-blocked-tasks.txt) and the full derivation is
+in [`docs/dualscreen-attach-flow.md`](docs/dualscreen-attach-flow.md), so anyone who wants to fix
+it themselves has everything needed.
 
 ## Installing
 
@@ -198,9 +198,9 @@ Stock can treat both panels as one logical surface for apps that support it
 
 ### 8. Attach reliability
 
-See *Known issue* above. The kernel patch in [`kernel/`](kernel/) is written and builds but is
-**not yet confirmed on hardware**; validating it (or disproving it) is the single highest-value
-open item, since the failure currently requires a reboot to clear.
+See *Known issue* above. A fix is written and builds, but is **not yet confirmed on hardware** and
+is therefore not published. Validating it (or disproving it) is the single highest-value open
+item, since the failure currently requires a reboot to clear.
 
 ## Building
 
@@ -219,16 +219,12 @@ extract them from an LG KDZ firmware image rather than from the running device.
 `build.sh` compiles the Java bridge, dexes it, validates the VINTF fragments and shell scripts,
 and assembles the zip. See the comments in it for the two environment variables you need to set.
 
-The optional kernel patch under [`kernel/`](kernel/) is built separately against a LineageOS
-`timelm` kernel tree — see [`kernel/README.md`](kernel/README.md).
-
 ### Repository layout
 
 ```text
 module/     the Magisk module: scripts, VINTF fragments, init .rc files, IDC
 src/        the framework bridge (Java, compiled to dualscreen-bridge.dex)
 tools/      blob extraction and the module build
-kernel/     optional kernel patch for the intermittent-attach deadlock
 docs/       the full reverse-engineering write-up and raw evidence
 ```
 

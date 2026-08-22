@@ -83,10 +83,13 @@ xhci is alive and retrying. The failure is a deadlock, not a missing call. `UsbS
 `dualscreen@1.1-service` also end up in D state behind it, which is the "phone seems to hang"
 symptom.
 
-**Fix (built, not yet validated on hardware):** `drivers/usb/misc/lge_ds3.c` now treats `-ENODEV`
-from `ds_dp_config()` as "DP handler not up yet" and re-kicks the state machine
-(`DS_DP_CONFIG_RETRY_MS` 50ms, `DS_DP_CONFIG_MAX_RETRY` 40 = 2s budget against a ~4ms race)
-instead of running the teardown path. Any other error still takes the original path.
+**Fix (written and builds, NOT published):** treat `-ENODEV` from `ds_dp_config()` in
+`drivers/usb/misc/lge_ds3.c` as "DP handler not up yet" and re-kick the state machine
+(50ms retry, 40 attempts = 2s budget against a ~4ms race) instead of running the teardown path.
+Any other error still takes the original path.
+
+It is deliberately held back from the repository until validated on hardware -- an untested kernel
+patch that people would flash is not worth the risk. Everything needed to re-derive it is above.
 
 **Validation still owed:** boot with the DS2 attached from power-on and confirm (a) the
 `DP handler not ready, retry N/40` line appears, (b) `ds_dp_config` then succeeds, (c) no
