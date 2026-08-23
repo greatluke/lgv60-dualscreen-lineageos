@@ -15,7 +15,7 @@ kernel enumerates it over USB and then stalls, because the process that would ta
 - A framework bridge exposing `IDisplayManagerEx` as the `dualscreen_ex` binder service
 - **The cover window** — the strip visible when the case is folded shut — showing clock,
   weekday/date, battery percentage with a proportional battery icon, a no-SIM indicator, and a
-  notification count, drawn in LG's own font with Stock's metrics
+  notification count, drawn in LG's own font with Stock's metrics, plus an optional caption
 - **Hinge-driven power sequencing**: unfolding the case powers the accessory up, folding it
   powers it down, automatically
 - **The DS2's main panel** — the DisplayPort link comes up and Android enumerates the second
@@ -28,6 +28,18 @@ kernel enumerates it over USB and then stalls, because the process that would ta
 - **Moving apps between screens** — swap the foreground app on each screen, or push/pull one across
 - Everything starts automatically at boot
 
+
+### Cover window caption
+
+To put a line of text above the clock:
+
+```sh
+adb shell su -c 'echo "LineageOS" > /data/adb/modules/lge_ds2_hal_shim/cover_label.txt'
+```
+
+The clock drops from 48px to 38px to make room, and the rest of the layout is unchanged. Delete
+the file to go back. It is re-read every 10s, so no restart is needed, and it is capped at one
+line of 16 characters so it cannot crowd the clock.
 
 ## Screenshots
 
