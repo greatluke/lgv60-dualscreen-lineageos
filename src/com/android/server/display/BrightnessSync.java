@@ -76,8 +76,6 @@ public final class BrightnessSync {
     private static final long MODE_TTL_MS = 5000L;
     /** How often to re-read the DS2's own setting when it is not following the main screen. */
     private static final long OWN_TTL_MS = 1000L;
-    /** Backstop re-read of the main setting, in case the backlight register did not move. */
-    private static final long SETTING_TTL_MS = 700L;
 
     private static volatile IDualScreen sHal;
     private static volatile boolean sForcePush;
