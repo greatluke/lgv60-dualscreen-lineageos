@@ -14,7 +14,8 @@ kernel enumerates it over USB and then stalls, because the process that would ta
   `coverdisplay@1.0`
 - A framework bridge exposing `IDisplayManagerEx` as the `dualscreen_ex` binder service
 - **The cover window** — the strip visible when the case is folded shut — showing clock,
-  weekday/date, battery percentage with a proportional battery icon, and a no-SIM indicator
+  weekday/date, battery percentage with a proportional battery icon, a no-SIM indicator, and a
+  notification count
 - **Hinge-driven power sequencing**: unfolding the case powers the accessory up, folding it
   powers it down, automatically
 - **The DS2's main panel** — the DisplayPort link comes up and Android enumerates the second
@@ -23,6 +24,8 @@ kernel enumerates it over USB and then stalls, because the process that would ta
   input is routed to the DS2's display, so apps can be opened and used on it directly
 - **Brightness tracking** — the DS2 follows the built-in panel, so the normal brightness slider
   and adaptive brightness drive both screens
+- **Dual-screen screenshots** — Power+VolDown produces one image containing both panels
+- **Moving apps between screens** — swap the foreground app on each screen, or push/pull one across
 - Everything starts automatically at boot
 
 
@@ -205,15 +208,32 @@ Notes for anyone touching it:
 - `DS2_MAX` is an empirical constant. The HAL range-checks nothing — it returns 0 for values well
   past any plausible maximum — so it cannot be derived, only calibrated by eye.
 
-### 3. Launching apps onto the DS2
+### 3. Launching and moving apps between screens — **DONE**
 
-`am start --display N` requires the `INTERNAL_SYSTEM_WINDOW` signature permission. **Root does not
-satisfy it** — this is the one item here that cannot be solved from a Magisk module alone. Options,
-none yet attempted:
+This was previously listed as blocked on the `INTERNAL_SYSTEM_WINDOW` signature permission. **That
+was wrong**, and the error is worth recording: the permission was tested from `adb shell`, which
+runs as uid 2000. `ActivityManagerService.checkComponentPermission` grants unconditionally to
+uid 0, and the bridge daemon runs as root. Both of these work from it:
 
-- a small system-signed helper APK (needs a signature the platform accepts)
-- a Xposed/LSPosed module hooking the launch path
-- patching `services.jar` directly
+```sh
+am start --display <id> -n <pkg>/<activity>    # launch onto a screen
+am display move-stack <taskId> <displayId>     # move a running app across
+```
+
+`DisplaySwap` builds on those:
+
+```sh
+DisplaySwap swap      # trade the foreground app on each screen
+DisplaySwap to-ds2    # push the foreground app to the DS2
+DisplaySwap to-main   # pull it back
+```
+
+It skips launcher furniture (`LawnchairLauncher`, `SecondaryDisplayLauncher`, `RecentsActivity`,
+SystemUI) when choosing what to move, since swapping a launcher is never what is meant.
+
+**Still missing: a trigger.** Stock used a gesture. The key combo is handled inside the framework
+and cannot be rebound from a module, so the options are a watched trigger file driven from an
+automation app, a key combo the daemon detects from `/dev/input`, or an LSPosed hook.
 
 ### 4. Display geometry
 

@@ -92,6 +92,10 @@ public class DualScreenBridgeDaemon {
         // DS2 to keep the two matched from the normal UI.
         BrightnessSync.start();
 
+        // Power+VolDown only ever captures the built-in panel, so mirror each screenshot onto
+        // the DS2 by watching the screenshots folder.
+        ScreenshotMirror.start();
+
         Slog.i(TAG, "entering loop");
         Looper.loop();
     }

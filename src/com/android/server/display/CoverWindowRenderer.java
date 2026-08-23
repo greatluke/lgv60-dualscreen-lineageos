@@ -164,7 +164,9 @@ public class CoverWindowRenderer {
         boolean noSim = isSimAbsent();
         String status = (battery >= 0 ? battery + "%" : "--") + (charging ? "+" : "");
 
-        String signature = clock + "|" + date + "|" + status + "|" + noSim;
+        int notifs = activeNotifications();
+
+        String signature = clock + "|" + date + "|" + status + "|" + noSim + "|" + notifs;
         if (signature.equals(mLastRendered)) {
             return;
         }
@@ -193,6 +195,20 @@ public class CoverWindowRenderer {
         TinyFont.draw(mPixels, WIDTH, HEIGHT, sx, rowY, status, smallScale, WHITE);
         sx += TinyFont.measure(status, smallScale) + 6;
         drawBattery(sx, rowY, 9, iconH, battery, WHITE);
+        sx += 9 + 7;
+
+        // Notification count, if there is room left on the row. Stock shows notification icons
+        // here; at 256x64 with a scale-4 clock there is nowhere near enough space for per-app
+        // icons, so this is a bell plus a count.
+        if (notifs > 0) {
+            String n = (notifs > 9) ? "9+" : String.valueOf(notifs);
+            final int bellW = 6 * smallScale;                 // 12px at scale 2
+            int need = bellW + 3 + TinyFont.measure(n, smallScale);
+            if (sx + need <= WIDTH - RIGHT_MARGIN) {
+                drawBell(sx, rowY, smallScale, WHITE);
+                TinyFont.draw(mPixels, WIDTH, HEIGHT, sx + bellW + 3, rowY, n, smallScale, WHITE);
+            }
+        }
 
         boolean ok = mController.drawSubDisplay(mPixels);
         if (ok) {
@@ -238,6 +254,74 @@ public class CoverWindowRenderer {
      * Vertical battery with a nub on top and a fill proportional to {@code pct}, like Stock's.
      * Occupies {@code w} x {@code h} starting at (x, y), nub included.
      */
+    /**
+     * Number of active notifications, via dumpsys because a NotificationListenerService would
+     * mean shipping an app. Cached briefly: the render tick runs every second and this dump is
+     * not cheap, while a couple of seconds of lag on a count is imperceptible.
+     *
+     * Deliberately short-lived, unlike an earlier SIM-state cache here that was long enough to
+     * leave a freshly inserted SIM showing as absent.
+     */
+    private int mNotifCount = 0;
+    private long mNotifCheckedAt = 0L;
+    private static final long NOTIF_TTL_MS = 3000L;
+
+    private int activeNotifications() {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - mNotifCheckedAt < NOTIF_TTL_MS) {
+            return mNotifCount;
+        }
+        mNotifCheckedAt = now;
+        Process p = null;
+        try {
+            p = new ProcessBuilder("sh", "-c",
+                    "dumpsys notification 2>/dev/null | grep -c '^    NotificationRecord'")
+                    .redirectErrorStream(true).start();
+            try (java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(p.getInputStream()))) {
+                String line = r.readLine();
+                if (line != null) {
+                    mNotifCount = Integer.parseInt(line.trim());
+                }
+            }
+            p.waitFor();
+        } catch (Throwable t) {
+            // leave the previous count in place rather than flapping to zero
+        } finally {
+            if (p != null) p.destroy();
+        }
+        return mNotifCount;
+    }
+
+    /**
+     * Bell glyph, 6x7 so it scales to 12x14 and lines up with the scale-2 text beside it.
+     *
+     * Drawn as an explicit bitmap rather than computed from a taper: the computed version came
+     * out as two diagonal side-strokes under a dome, which reads as an umbrella, not a bell.
+     * At this size the silhouette has to be stated outright -- the flat rim and the clapper
+     * hanging below it are what make it legible.
+     */
+    private static final String[] BELL = {
+        "  ##  ",
+        " #### ",
+        " #  # ",
+        "#    #",
+        "#    #",
+        "######",
+        "  ##  ",
+    };
+
+    private void drawBell(int x, int y, int scale, int color) {
+        for (int row = 0; row < BELL.length; row++) {
+            String line = BELL[row];
+            for (int col = 0; col < line.length(); col++) {
+                if (line.charAt(col) == '#') {
+                    fillRect(x + col * scale, y + row * scale, scale, scale, color);
+                }
+            }
+        }
+    }
+
     private void drawBattery(int x, int y, int w, int h, int pct, int color) {
         int nubW = Math.max(2, w / 3);
         int nubH = 2;
