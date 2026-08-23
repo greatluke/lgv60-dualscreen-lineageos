@@ -79,12 +79,18 @@ public class DualScreenBridgeDaemon {
             public void onCoverDisplayAttached() {
                 boolean ok = TouchEnabler.enableTouchReporting();
                 Slog.i(TAG, "DS2 attached: enableTouchReporting -> " + ok);
+                // The panel comes back at its own default brightness, so re-push ours.
+                BrightnessSync.resync();
             }
         });
 
         // Cover the case where the DS2 was already attached before this daemon started, which
         // is the normal situation at boot -- no attach event will arrive for it.
         TouchEnabler.enableTouchReporting();
+
+        // Android's brightness slider only drives the built-in panel, so mirror it onto the
+        // DS2 to keep the two matched from the normal UI.
+        BrightnessSync.start();
 
         Slog.i(TAG, "entering loop");
         Looper.loop();

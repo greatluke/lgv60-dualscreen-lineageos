@@ -21,6 +21,8 @@ kernel enumerates it over USB and then stalls, because the process that would ta
   screen as a 1080x2460@60 external display. Both mirror and desktop mode work.
 - **Touch on the second screen** — the digitizer is taken out of LPWG mode on attach and its
   input is routed to the DS2's display, so apps can be opened and used on it directly
+- **Brightness tracking** — the DS2 follows the built-in panel, so the normal brightness slider
+  and adaptive brightness drive both screens
 - Everything starts automatically at boot
 
 
@@ -185,17 +187,23 @@ attach, not once — the controller returns to U0 each time.
 
 `TouchProbe` and `AtProbe` are kept as standalone diagnostics for `IDualScreen@1.0`.
 
-### 2. Brightness
+### 2. Brightness — **DONE**
 
-`IDualScreen` exposes `setBrightness()`, `setSubDisplayBrightness()` and
-`setDSBrightnessOffset()`. `setBrightness()` is known to work when called directly; nothing wires
-it to the system brightness yet, so the DS2 sits at whatever level it powered on with.
+Android's slider only drives the built-in panel, and the DS2 is an ordinary external display with
+no control surface, so it used to sit at whatever level it powered on with. `BrightnessSync`
+polls `panel0-backlight` and mirrors it through `IDualScreen.setBrightness()`, which makes the
+normal UI slider and adaptive brightness control both screens.
 
-The main panel's live value is readable from `panel0-backlight`. Note `panel0-backlight-ex` is
-vestigial — it accepts writes and `actual_brightness` stays 0, so it is not the path.
+Notes for anyone touching it:
 
-Needs: track main-screen brightness in `CoverDisplayPowerBridge` and mirror it, plus honour the
-offset so the two panels match perceptually.
+- `panel0-backlight-ex` is **vestigial** — it accepts writes and its `actual_brightness` stays 0.
+  It is neither a usable source nor sink. The live value is `panel0-backlight`.
+- Resolve the HAL proxy **once**. Calling `IDualScreen.getService()` per update costs a
+  service-manager lookup each time and is visible as lag when the slider moves.
+- The DS2 forgets its brightness across a power cycle, so the sync has to be re-pushed on attach
+  rather than relying on a cached "last value" comparison.
+- `DS2_MAX` is an empirical constant. The HAL range-checks nothing — it returns 0 for values well
+  past any plausible maximum — so it cannot be derived, only calibrated by eye.
 
 ### 3. Launching apps onto the DS2
 
