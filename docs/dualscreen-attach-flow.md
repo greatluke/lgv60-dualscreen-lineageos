@@ -5,7 +5,7 @@
 ## PROJECT STATUS (updated 2026-08-22, evening) — read before reopening anything
 
 ```text
-Problem A — DS2 attach reliability (-108) .................. ROOT-CAUSED, fix built, untested
+Problem A — DS2 attach reliability (-108) .................. FIXED and validated
 Problem B — DS2 DP link to the main panel .................. SOLVED
 Framework / userspace integration .......................... SOLVED and shipping
 ```
@@ -83,13 +83,34 @@ xhci is alive and retrying. The failure is a deadlock, not a missing call. `UsbS
 `dualscreen@1.1-service` also end up in D state behind it, which is the "phone seems to hang"
 symptom.
 
-**Fix (written and builds, NOT published):** treat `-ENODEV` from `ds_dp_config()` in
+**Fix (validated on hardware):** treat `-ENODEV` from `ds_dp_config()` in
 `drivers/usb/misc/lge_ds3.c` as "DP handler not up yet" and re-kick the state machine
 (50ms retry, 40 attempts = 2s budget against a ~4ms race) instead of running the teardown path.
-Any other error still takes the original path.
+Any other error still takes the original path. Shipped as
+`kernel/0001-lge_ds3-retry-ds_dp_config-on-ENODEV.patch`.
 
-It is deliberately held back from the repository until validated on hardware -- an untested kernel
-patch that people would flash is not worth the risk. Everything needed to re-derive it is above.
+**The retry must also bypass the `is_ds_connected` guard** at the top of `STATE_DS_STARTUP`. That
+flag is set *before* `ds_dp_config()` is called, so a plain re-entry returns early and never
+reaches the retried call. The first version of this fix did exactly that: it removed the deadlock
+(zero -108, `DS_Ready` reached, no blocked workers) while `is_dp_configured` stayed false and the
+panel remained dark -- `ds2_pd_store: dp is not configured`. Everything looked healthy by the
+Problem A criteria and DP was still broken. Worth remembering: verify the thing the retry exists
+to accomplish, not only the symptom it was meant to remove.
+
+Validation, 4/4 cold boots with the DS2 attached from power-on:
+
+```text
+[1.037221] ds_dp_config: No DP handler found
+[1.037229] DP handler not ready, retry 1/40 in 50ms
+[1.087277] ds_dp_config: config:1
+[30.619265] EDID read successed, count=1
+[30.628391] link training #1 successful
+[30.630483] link training #2 successful
+   err108=0  DS_Ready=2  DS_Recovery=0  blocked_workers=0  dp_status=connected
+   Android: "HDMI Screen" uniqueId="local:4" 1080x2460
+```
+
+That `local:4` also confirms the IDC's `touch.displayId = local:4` assumption is correct.
 
 **Validation still owed:** boot with the DS2 attached from power-on and confirm (a) the
 `DP handler not ready, retry N/40` line appears, (b) `ds_dp_config` then succeeds, (c) no
