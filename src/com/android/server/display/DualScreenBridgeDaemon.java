@@ -71,6 +71,21 @@ public class DualScreenBridgeDaemon {
             }
         });
 
+        // The DS2 digitizer comes up in LPWG (gesture-only) mode on every attach and stays
+        // silent until told otherwise, so re-arm it each time the accessory appears.
+        coverPower.setCoverDisplayAttachListener(
+                new CoverDisplayPowerBridge.CoverDisplayAttachListener() {
+            @Override
+            public void onCoverDisplayAttached() {
+                boolean ok = TouchEnabler.enableTouchReporting();
+                Slog.i(TAG, "DS2 attached: enableTouchReporting -> " + ok);
+            }
+        });
+
+        // Cover the case where the DS2 was already attached before this daemon started, which
+        // is the normal situation at boot -- no attach event will arrive for it.
+        TouchEnabler.enableTouchReporting();
+
         Slog.i(TAG, "entering loop");
         Looper.loop();
     }

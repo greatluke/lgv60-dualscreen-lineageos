@@ -80,6 +80,21 @@ public class CoverDisplayPowerBridge {
         mCoverStateListener = l;
     }
 
+    /**
+     * Notified when the DS2 itself attaches, so its digitizer can be taken out of LPWG mode.
+     * The controller comes up gesture-only on every attach, so this has to run each time and
+     * not once at startup.
+     */
+    public interface CoverDisplayAttachListener {
+        void onCoverDisplayAttached();
+    }
+
+    private volatile CoverDisplayAttachListener mAttachListener;
+
+    public void setCoverDisplayAttachListener(CoverDisplayAttachListener l) {
+        mAttachListener = l;
+    }
+
     private final IAccessoryCallback mCoverDisplayCallback = new IAccessoryCallback.Stub() {
         @Override
         public void notifyAccessoryChange(int state, int type) {
@@ -207,6 +222,15 @@ public class CoverDisplayPowerBridge {
      */
     private void onCoverStateChanged(int state) {
         setCoverDisplayButtonStatus(state != 0, true);
+
+        if (state != 0) {
+            CoverDisplayAttachListener l = mAttachListener;
+            if (l != null) {
+                // The panel has to be powered before the digitizer will accept the mode change,
+                // so this deliberately runs after setCoverDisplayButtonStatus above.
+                l.onCoverDisplayAttached();
+            }
+        }
     }
 
     /**

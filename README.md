@@ -19,6 +19,8 @@ kernel enumerates it over USB and then stalls, because the process that would ta
   powers it down, automatically
 - **The DS2's main panel** — the DisplayPort link comes up and Android enumerates the second
   screen as a 1080x2460@60 external display. Both mirror and desktop mode work.
+- **Touch on the second screen** — the digitizer is taken out of LPWG mode on attach and its
+  input is routed to the DS2's display, so apps can be opened and used on it directly
 - Everything starts automatically at boot
 
 
@@ -39,9 +41,9 @@ second V60 running a completely stock LineageOS kernel.
 
 ## What does not work yet
 
-The second screen lights up and is usable, but stock does considerably more with it. In short:
-touch is not yet routed to the DS2, apps cannot be launched directly onto it, and its brightness
-is not tied to the main screen's.
+The second screen lights up, responds to touch and runs apps, but stock still does more with it.
+In short: apps cannot be *launched* onto it programmatically, and its brightness is not tied to
+the main screen's.
 
 See [TO-DO](#to-do--reaching-parity-with-stock) for the full gap list and what each would take.
 
@@ -139,77 +141,49 @@ is missing, roughly in order of how tractable it looks.
 Everything below is reachable through HAL methods the module **already has running** unless noted
 — `lshal` shows the full `IDualScreen` surface, and much of it is simply not called yet.
 
-### 1. Touch input on the second screen
+### 1. Touch input on the second screen — **DONE**
 
-**The IDC works. The digitizer is the problem.** This was tested end to end, so do not spend time
-re-checking the routing.
+Two separate things had to be right, and the second one is the interesting bug.
 
-`module/system/vendor/usr/idc/Vendor_1004_Product_637a.idc` is applied exactly as written, and
-`local:4` is confirmed correct (Android reports the DS2 as `uniqueId="local:4"`):
+**Routing.** `module/system/vendor/usr/idc/Vendor_1004_Product_637a.idc` binds the digitizer to
+the external display. Confirmed applied, and `local:4` is confirmed correct:
 
 ```text
 Touch Input Mapper (mode - DIRECT):
   DeviceType: TOUCH_SCREEN
   AssociatedDisplay: isExternal=true, displayId='local:4'
   OrientationAware: true
-  X: min=0, max=1079.001   Y: min=0, max=2459.000
 ```
 
-`hid-multitouch` binds the panel, parses its descriptor and creates both the input devices and
-`/dev/hidraw0`. Everything above the panel is in place.
+**Waking the digitizer.** LG's touch controllers run in U0 (sleep / knock-on gestures only) or U3
+(normal reporting). The DS2's comes up in **U0 on every attach**, and nothing in LineageOS tells
+it otherwise — so the panel lights up and the digitizer stays mute.
 
-What is missing is the panel itself: **it emits no HID reports at all.** Under sustained swiping,
-`getevent` records zero events on the DS2 nodes while the built-in screen produces thousands in
-the same capture, and `cat /dev/hidraw0` blocks indefinitely rather than returning data. So the
-touch controller is enumerated but never switched on.
-
-**The touch controller itself is alive and healthy.** Probed over `IDualScreen@1.0`:
+The symptoms point everywhere except the real cause:
 
 ```text
-getTouchFirmwareVersion -> status=0 (NO_ERROR)
-    version : v3.34
-    product id : [B3W68DS3]
-getSubDisplayPowerState -> status=0  state=3
-DoTouchReset            -> 0 (success)
+getTouchFirmwareVersion  -> status=0, v3.34, product id [B3W68DS3]
+getSelfTest              -> status=0, "Raw Data : Pass / Channel Status : Pass"
+getGpiopin               -> status=0, reset_pin=1 (out of reset), int_pin=1
+hid-multitouch           -> binds, creates input nodes with correct axis ranges
+/dev/hidraw0             -> blocks forever, not one report
 ```
 
-So it is powered, responsive on the HAL's own channel, and accepts a reset — it just never emits
-HID reports over USB. `DoTouchReset()` alone does not restore reporting.
+`DoTouchReset()`, `set_touch_perf(true)` and `ds_update_state()` all return success and change
+nothing. What actually works is handing the controller the screen state:
 
-**The kernel's LG-specific DS2 HID support is present and firing**, on both a stock LineageOS
-kernel and a self-built one (`CONFIG_LGE_HID_STYLUS_PEN=y`):
-
-```text
-[Touch_HID] Attach LGE Dualscreen 3 !!! [LGE LMV600N]
-[Touch]     NOTIFY_DUALSCREEN_STATE : 1
+```java
+LpwgStatus st = new LpwgStatus();
+st.lpwgMode = LpwgMode.DISABLE;
+st.screenStatus = ScreenStatus.ON;
+hal.setStatus(st);          // -> 0, and the digitizer starts reporting
 ```
 
-So the attach path in `drivers/hid/usbhid/hid-core.c` (guarded on `hid->product == 0x637a`) runs
-as designed. That rules out the whole "LineageOS is missing the driver support" theory.
+`TouchEnabler` does this, and `DualScreenBridgeDaemon` calls it on every DS2 attach (plus once at
+startup, for the case where the DS2 was already attached before the daemon ran). It has to run per
+attach, not once — the controller returns to U0 each time.
 
-What remains unexplained is narrow: a controller that answers the HAL but stays silent on its USB
-HID endpoint. Note `hid-multitouch` logs `unknown main item tag 0x0` while parsing LG's report
-descriptor, so a descriptor-parsing or input-mode issue is a live suspect — multitouch devices
-must be switched into reporting mode via an Input Mode feature report, and a descriptor the
-driver only half-understands could leave that step undone.
-
-Untried leads, in order of cheapness:
-
-```text
-getSelfTest()        would say whether the panel considers its own digitizer functional
-sendAtCommand()      stock may enable touch reporting over the AT channel, not via HIDL
-set_touch_perf()     IDualScreen@1.1
-```
-
-A `TouchProbe` class for calling these lives in the bridge sources; build it into the dex and run
-it with `app_process`.
-
-Reproducing the check:
-
-```sh
-adb shell "su -c 'getevent -lt'"        # swipe the DS2, then the main screen as a control
-adb shell "su -c 'cat /dev/hidraw0'"    # blocks with no output = controller silent
-```
+`TouchProbe` and `AtProbe` are kept as standalone diagnostics for `IDualScreen@1.0`.
 
 ### 2. Brightness
 

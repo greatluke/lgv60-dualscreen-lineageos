@@ -67,8 +67,29 @@ public class TouchProbe {
             System.out.println("getSubDisplayPowerState THREW: " + t);
         }
 
+        // Read-only diagnostic: does the panel think its own digitizer is functional?
+        try {
+            final int[] st = { -1 };
+            final String[] res = { null };
+            hal.getSelfTest((s, r) -> { st[0] = s; res[0] = r; });
+            System.out.println("getSelfTest -> status=" + st[0] + " result="
+                    + (res[0] == null ? "<null>" : "\"" + res[0] + "\""));
+        } catch (Throwable t) {
+            System.out.println("getSelfTest THREW: " + t);
+        }
+
+        try {
+            final int[] gp = { -1 };
+            final String[] pin = { null };
+            hal.getGpiopin((s, r) -> { gp[0] = s; pin[0] = r; });
+            System.out.println("getGpiopin -> status=" + gp[0] + " pins="
+                    + (pin[0] == null ? "<null>" : "\"" + pin[0].trim() + "\""));
+        } catch (Throwable t) {
+            System.out.println("getGpiopin THREW: " + t);
+        }
+
         if (!doReset) {
-            System.out.println("(pass --reset to also issue DoTouchReset)");
+            System.out.println("(pass --reset to also issue DoTouchReset + set_touch_perf(true))");
             return;
         }
 
@@ -76,6 +97,36 @@ public class TouchProbe {
             System.out.println("DoTouchReset -> " + hal.DoTouchReset());
         } catch (Throwable t) {
             System.out.println("DoTouchReset THREW: " + t);
+        }
+
+        // LG touch controllers sit in U0 (sleep/LPWG, gesture-only) or U3 (normal reporting).
+        // A controller parked in U0 matches every symptom here: firmware answers, self-test
+        // passes, INT idle, and no ordinary touch reports. setStatus is how the screen state is
+        // handed to it -- screenStatus=ON with LPWG disabled should mean "wake up and report
+        // normally".
+        try {
+            vendor.lge.hardware.dualscreen.V1_0.LpwgStatus st =
+                    new vendor.lge.hardware.dualscreen.V1_0.LpwgStatus();
+            st.lpwgMode = vendor.lge.hardware.dualscreen.V1_0.LpwgMode.DISABLE;
+            st.screenStatus = vendor.lge.hardware.dualscreen.V1_0.ScreenStatus.ON;
+            System.out.println("setStatus(lpwg=DISABLE, screen=ON) -> " + hal.setStatus(st));
+        } catch (Throwable t) {
+            System.out.println("setStatus THREW: " + t);
+        }
+
+        // set_touch_perf lives on @1.1 and maps to the HAL's AT%TCPERF= command. It takes an
+        // explicit boolean, which makes it the most enable-shaped method on the interface.
+        try {
+            vendor.lge.hardware.dualscreen.V1_1.IDualScreen hal11 =
+                    vendor.lge.hardware.dualscreen.V1_1.IDualScreen.getService(true);
+            if (hal11 == null) {
+                System.out.println("IDualScreen@1.1 not available");
+            } else {
+                System.out.println("set_touch_perf(true) -> " + hal11.set_touch_perf(true));
+                System.out.println("ds_update_state()    -> " + hal11.ds_update_state());
+            }
+        } catch (Throwable t) {
+            System.out.println("@1.1 calls THREW: " + t);
         }
     }
 }
