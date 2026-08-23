@@ -220,32 +220,26 @@ Notes for anyone touching it:
 - `DS2_MAX` is an empirical constant. The HAL range-checks nothing — it returns 0 for values well
   past any plausible maximum — so it cannot be derived, only calibrated by eye.
 
-### 3. Launching and moving apps between screens — **DONE**
+### 3. Launching and moving apps between screens — **investigated, withdrawn**
 
-This was previously listed as blocked on the `INTERNAL_SYSTEM_WINDOW` signature permission. **That
-was wrong**, and the error is worth recording: the permission was tested from `adb shell`, which
-runs as uid 2000. `ActivityManagerService.checkComponentPermission` grants unconditionally to
-uid 0, and the bridge daemon runs as root. Both of these work from it:
+The mechanism works and is not permission-blocked. This was previously listed as needing the
+`INTERNAL_SYSTEM_WINDOW` signature permission; that was wrong, and measured from `adb shell`
+(uid 2000). `ActivityManagerService.checkComponentPermission` grants unconditionally to uid 0, so
+from a root process both of these work:
 
 ```sh
 am start --display <id> -n <pkg>/<activity>    # launch onto a screen
 am display move-stack <taskId> <displayId>     # move a running app across
 ```
 
-`DisplaySwap` builds on those:
+**It is deliberately not shipped.** Moving tasks between displays can strand the lockscreen on the
+DS2, at which point the fingerprint reader is on the wrong panel and the phone cannot be unlocked.
+That is a bad failure for a convenience feature, and the trigger for it is not yet well enough
+understood to ship safely.
 
-```sh
-DisplaySwap swap      # trade the foreground app on each screen
-DisplaySwap to-ds2    # push the foreground app to the DS2
-DisplaySwap to-main   # pull it back
-```
-
-It skips launcher furniture (`LawnchairLauncher`, `SecondaryDisplayLauncher`, `RecentsActivity`,
-SystemUI) when choosing what to move, since swapping a launcher is never what is meant.
-
-**Still missing: a trigger.** Stock used a gesture. The key combo is handled inside the framework
-and cannot be rebound from a module, so the options are a watched trigger file driven from an
-automation app, a key combo the daemon detects from `/dev/input`, or an LSPosed hook.
+The implementation is kept out of tree under `archive/display-swap/` for whoever picks this up.
+Note the DS2's display id is **not stable** — it has been observed as both 2 and 4 across
+attaches, so it has to be resolved fresh each time rather than cached.
 
 ### 4. Display geometry
 
