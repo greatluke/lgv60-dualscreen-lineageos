@@ -163,14 +163,46 @@ What is missing is the panel itself: **it emits no HID reports at all.** Under s
 the same capture, and `cat /dev/hidraw0` blocks indefinitely rather than returning data. So the
 touch controller is enumerated but never switched on.
 
-The likely next step is the `IDualScreen` touch methods, none of which the bridge currently calls:
+**The touch controller itself is alive and healthy.** Probed over `IDualScreen@1.0`:
 
 ```text
-getTouchFirmwareVersion()   cheap probe -- a real version means the controller is alive
-DoTouchReset()              what stock most plausibly issues on attach
-set_touch_perf()
-DoTouchFirmwareUpgrade()
+getTouchFirmwareVersion -> status=0 (NO_ERROR)
+    version : v3.34
+    product id : [B3W68DS3]
+getSubDisplayPowerState -> status=0  state=3
+DoTouchReset            -> 0 (success)
 ```
+
+So it is powered, responsive on the HAL's own channel, and accepts a reset — it just never emits
+HID reports over USB. `DoTouchReset()` alone does not restore reporting.
+
+**The kernel's LG-specific DS2 HID support is present and firing**, on both a stock LineageOS
+kernel and a self-built one (`CONFIG_LGE_HID_STYLUS_PEN=y`):
+
+```text
+[Touch_HID] Attach LGE Dualscreen 3 !!! [LGE LMV600N]
+[Touch]     NOTIFY_DUALSCREEN_STATE : 1
+```
+
+So the attach path in `drivers/hid/usbhid/hid-core.c` (guarded on `hid->product == 0x637a`) runs
+as designed. That rules out the whole "LineageOS is missing the driver support" theory.
+
+What remains unexplained is narrow: a controller that answers the HAL but stays silent on its USB
+HID endpoint. Note `hid-multitouch` logs `unknown main item tag 0x0` while parsing LG's report
+descriptor, so a descriptor-parsing or input-mode issue is a live suspect — multitouch devices
+must be switched into reporting mode via an Input Mode feature report, and a descriptor the
+driver only half-understands could leave that step undone.
+
+Untried leads, in order of cheapness:
+
+```text
+getSelfTest()        would say whether the panel considers its own digitizer functional
+sendAtCommand()      stock may enable touch reporting over the AT channel, not via HIDL
+set_touch_perf()     IDualScreen@1.1
+```
+
+A `TouchProbe` class for calling these lives in the bridge sources; build it into the dex and run
+it with `app_process`.
 
 Reproducing the check:
 
