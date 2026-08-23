@@ -1,5 +1,11 @@
 package com.android.server.display;
 
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
+import android.graphics.Typeface;
 import android.os.Handler;
 import android.util.Slog;
 
@@ -19,9 +25,14 @@ import java.util.Locale;
  * Panel geometry matches what the HAL reports (getSubDisplayInfo: 256x64, format 3). Pixels go
  * out via SubLcdController.drawSubDisplay(int[]) -> IDualScreen.drawSubDisplay().
  *
- * Text is drawn with {@link TinyFont} rather than android.graphics: Paint/Canvas text requires
- * the system font configuration, which a bare app_process never loads (Typeface.DEFAULT throws,
- * Typeface.createFromFile() fails, and Paint.getFontMetrics() then aborts the process natively).
+ * Text is real android.graphics text in LG's own font, matching Stock's metrics (48px clock,
+ * 20px date, 13px battery, 18x18 battery icon, 2px margins, 128px right block).
+ *
+ * That is only possible because of the Typeface bootstrap below. In a bare app_process the font
+ * map is never installed -- Typeface.createFromFile() throws "The Typeface is not fully
+ * initialized" and Paint.measureText() then *aborts the process natively*. Calling the hidden
+ * Typeface.loadPreinstalledSystemFontMap() first fixes it. This project previously worked around
+ * the problem with a hand-rolled 5x7 bitmap font (TinyFont), which is no longer needed here.
  */
 public class CoverWindowRenderer {
 
@@ -42,6 +53,119 @@ public class CoverWindowRenderer {
     private final SubLcdController mController;
     private final Handler mHandler;
     private final int[] mPixels = new int[WIDTH * HEIGHT];
+
+    /** LG's own clock font, lifted from Stock's LGSubDisplay. Only 3.4KB -- digits and colon. */
+    private static final String LG_NUMBER_FONT =
+            "/data/adb/modules/lge_ds2_hal_shim/fonts/font_lg_smart_ui_number_regular.ttf";
+
+    // Stock's metrics, from LGSubDisplay's dimens.xml.
+    private static final float FONT_TIME = 48f;
+    private static final float FONT_DATE = 20f;
+    private static final float FONT_BATTERY = 13f;
+    private static final int MARGIN_START = 2;
+    private static final int MARGIN_END = 2;
+    private static final int DATE_BOTTOM_GAP = 3;
+    private static final int BATT_ICON_W = 18;
+    private static final int BATT_ICON_H = 18;
+
+    /**
+     * Installs the system font map. MUST run before any Paint/Typeface use: without it
+     * Paint.measureText() does not throw, it aborts the process. Hidden API, so reflection.
+     */
+    private static void bootstrapTypeface() {
+        try {
+            java.lang.reflect.Method m =
+                    Typeface.class.getDeclaredMethod("loadPreinstalledSystemFontMap");
+            m.setAccessible(true);
+            m.invoke(null);
+        } catch (Throwable t) {
+            Slog.e(TAG, "Typeface bootstrap failed; text rendering will not work", t);
+        }
+    }
+
+    /** Paint.Style constants, resolved reflectively for the same reason as Bitmap.Config. */
+    private static Object sStyleFill, sStyleStroke;
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void resolveStyles() {
+        if (sStyleFill != null) {
+            return;
+        }
+        try {
+            Class st = Class.forName("android.graphics.Paint$Style");
+            sStyleFill = Enum.valueOf(st, "FILL");
+            sStyleStroke = Enum.valueOf(st, "STROKE");
+        } catch (Throwable t) {
+            Slog.e(TAG, "cannot resolve Paint.Style", t);
+        }
+    }
+
+    private void setStyle(Paint p, Object style) {
+        try {
+            java.lang.reflect.Method m = Paint.class.getMethod("setStyle",
+                    Class.forName("android.graphics.Paint$Style"));
+            m.invoke(p, style);
+        } catch (Throwable t) {
+            // leave the paint as-is; worst case the icon is filled rather than stroked
+        }
+    }
+
+    private Bitmap mBitmap;
+    private Canvas mCanvas;
+    private Paint mClockPaint, mDatePaint, mBattPaint, mIconPaint;
+
+    private void initGraphics() {
+        if (mCanvas != null) {
+            return;
+        }
+        bootstrapTypeface();
+        resolveStyles();
+
+        Typeface number = Typeface.DEFAULT;
+        try {
+            Typeface t = Typeface.createFromFile(LG_NUMBER_FONT);
+            if (t != null) {
+                number = t;
+            }
+        } catch (Throwable t) {
+            Slog.w(TAG, "LG number font unavailable, falling back to the system font", t);
+        }
+
+        mBitmap = createBitmap(WIDTH, HEIGHT);
+        mCanvas = new Canvas(mBitmap);
+
+        mClockPaint = textPaint(FONT_TIME, number);
+        mDatePaint = textPaint(FONT_DATE, Typeface.DEFAULT);
+        mBattPaint = textPaint(FONT_BATTERY, Typeface.DEFAULT);
+        mIconPaint = new Paint();
+        mIconPaint.setAntiAlias(true);
+        mIconPaint.setColor(WHITE);
+    }
+
+    private static Paint textPaint(float size, Typeface tf) {
+        Paint p = new Paint();
+        p.setAntiAlias(true);
+        p.setSubpixelText(true);
+        p.setColor(WHITE);
+        p.setTextSize(size);
+        p.setTypeface(tf);
+        return p;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Bitmap createBitmap(int w, int h) {
+        try {
+            // Bitmap.Config cannot be named at compile time: the enjarify-converted framework
+            // jars drop nested enums.
+            Class cfg = Class.forName("android.graphics.Bitmap$Config");
+            Object argb = Enum.valueOf(cfg, "ARGB_8888");
+            java.lang.reflect.Method create =
+                    Bitmap.class.getMethod("createBitmap", int.class, int.class, cfg);
+            return (Bitmap) create.invoke(null, w, h, argb);
+        } catch (Throwable t) {
+            throw new IllegalStateException("cannot create bitmap", t);
+        }
+    }
 
     private final SimpleDateFormat mClockFmt = new SimpleDateFormat("HH:mm", Locale.US);
 
@@ -142,74 +266,113 @@ public class CoverWindowRenderer {
 
     /** Renders and pushes a frame, skipping the HAL round-trip when nothing visible changed. */
     public void render() {
+        if (!drawFrame()) {
+            return;
+        }
+        pushFrame();
+    }
+
+    /** Builds the frame. @return false if nothing visible changed. */
+    boolean drawFrame() {
+        initGraphics();
+
         Date now = new Date();
         String clock = mClockFmt.format(now);
 
-        // Space left for the right-hand block, given the clock actually rendered.
-        final int CLOCK_SCALE = 4, SMALL_SCALE = 2;
-        final int LEFT_MARGIN = 6, GAP = 10, RIGHT_MARGIN = 4;
-        int blockX = LEFT_MARGIN + TinyFont.measure(clock, CLOCK_SCALE) + GAP;
-        int avail = WIDTH - blockX - RIGHT_MARGIN;
+        // Space left for the right-hand block, measured from the clock actually rendered.
+        float clockW = mClockPaint.measureText(clock);
+        int blockLeft = (int) Math.ceil(MARGIN_START + clockW) + 6;
+        int avail = WIDTH - blockLeft - MARGIN_END;
 
-        String date = mDateFmts[mDateFmts.length - 1].format(now);
+        // Longest date that fits the space the clock leaves. Stock shows it uppercase.
+        String date = mDateFmts[mDateFmts.length - 1].format(now).toUpperCase(Locale.US);
         for (SimpleDateFormat f : mDateFmts) {
-            String candidate = f.format(now);
-            if (TinyFont.measure(candidate, SMALL_SCALE) <= avail) {
+            String candidate = f.format(now).toUpperCase(Locale.US);
+            if (mDatePaint.measureText(candidate) <= avail) {
                 date = candidate;
                 break;
             }
         }
+
         int battery = readInt(BATTERY_CAPACITY, -1);
         boolean charging = "Charging".equalsIgnoreCase(readString(BATTERY_STATUS, ""));
         boolean noSim = isSimAbsent();
         String status = (battery >= 0 ? battery + "%" : "--") + (charging ? "+" : "");
-
         int notifs = activeNotifications();
 
         String signature = clock + "|" + date + "|" + status + "|" + noSim + "|" + notifs;
         if (signature.equals(mLastRendered)) {
-            return;
+            return false;
         }
+        mPendingSignature = signature;
 
-        java.util.Arrays.fill(mPixels, BLACK);
+        mCanvas.drawColor(BLACK);
 
-        // Clock, scale 4 -> 20x28 px glyphs, vertically centred.
-        final int clockScale = CLOCK_SCALE;
-        final int smallScale = SMALL_SCALE;
-        int clockY = (HEIGHT - TinyFont.GLYPH_H * clockScale) / 2;
-        TinyFont.draw(mPixels, WIDTH, HEIGHT, LEFT_MARGIN, clockY, clock, clockScale, WHITE);
+        // Clock: vertically centred on the real font metrics, not on the glyph box.
+        // Paint.FontMetrics cannot be named here (enjarify drops nested classes); ascent() and
+        // descent() give the same values.
+        float clockBaseline = (HEIGHT - (mClockPaint.ascent() + mClockPaint.descent())) / 2f;
+        mCanvas.drawText(clock, MARGIN_START, clockBaseline, mClockPaint);
 
-        int right = blockX;
-        TinyFont.draw(mPixels, WIDTH, HEIGHT, right, 14, date, smallScale, WHITE);
+        // Right-hand block: date above, status row below, both right-aligned like Stock.
+        final int rightEdge = WIDTH - MARGIN_END;
+        float dateAsc = mDatePaint.ascent(), dateDesc = mDatePaint.descent();
+        float battAsc = mBattPaint.ascent(), battDesc = mBattPaint.descent();
+        float dateH = -dateAsc + dateDesc;
+        float rowH = Math.max(-battAsc + battDesc, BATT_ICON_H);
+        float blockH = dateH + DATE_BOTTOM_GAP + rowH;
+        float blockTop = (HEIGHT - blockH) / 2f;
 
-        // Status row, laid out like Stock: [no-SIM] | NN% [battery]
-        int sx = right;
-        final int rowY = 36;
-        final int iconH = TinyFont.GLYPH_H * smallScale;   // align icons to the text height
+        float dateBaseline = blockTop - dateAsc;
+        float dateW = mDatePaint.measureText(date);
+        mCanvas.drawText(date, rightEdge - dateW, dateBaseline, mDatePaint);
+
+        // Status row, right-aligned: [notif] [no-SIM] NN% [battery]
+        float rowTop = blockTop + dateH + DATE_BOTTOM_GAP;
+        float rowMid = rowTop + rowH / 2f;
+        float x = rightEdge;
+
+        x -= BATT_ICON_W;
+        drawBatteryIcon(x, rowMid - BATT_ICON_H / 2f, BATT_ICON_W, BATT_ICON_H, battery);
+
+        float statusW = mBattPaint.measureText(status);
+        x -= 4 + statusW;
+        float statusBaseline = rowMid - (battAsc + battDesc) / 2f;
+        mCanvas.drawText(status, x, statusBaseline, mBattPaint);
+
         if (noSim) {
-            drawNoSim(sx, rowY, 11, iconH, WHITE);
-            sx += 15;
-            fillRect(sx, rowY, 1, iconH, WHITE);           // the "|" separator
-            sx += 6;
+            float d = rowH * 0.8f;
+            x -= 5 + d;
+            drawNoSimIcon(x, rowMid - d / 2f, d, d);
         }
-        TinyFont.draw(mPixels, WIDTH, HEIGHT, sx, rowY, status, smallScale, WHITE);
-        sx += TinyFont.measure(status, smallScale) + 6;
-        drawBattery(sx, rowY, 9, iconH, battery, WHITE);
-        sx += 9 + 7;
 
-        // Notification count, if there is room left on the row. Stock shows notification icons
-        // here; at 256x64 with a scale-4 clock there is nowhere near enough space for per-app
-        // icons, so this is a bell plus a count.
         if (notifs > 0) {
             String n = (notifs > 9) ? "9+" : String.valueOf(notifs);
-            final int bellW = 6 * smallScale;                 // 12px at scale 2
-            int need = bellW + 3 + TinyFont.measure(n, smallScale);
-            if (sx + need <= WIDTH - RIGHT_MARGIN) {
-                drawBell(sx, rowY, smallScale, WHITE);
-                TinyFont.draw(mPixels, WIDTH, HEIGHT, sx + bellW + 3, rowY, n, smallScale, WHITE);
+            float nW = mBattPaint.measureText(n);
+            float bellH = rowH * 0.85f;
+            float bellW = bellH * 0.8f;
+            float need = bellW + 2 + nW + 5;
+            if (x - need >= blockLeft - 40) {   // the block may spill left of the date if needed
+                x -= 5 + nW;
+                mCanvas.drawText(n, x, statusBaseline, mBattPaint);
+                x -= 2 + bellW;
+                drawBell(x, rowMid - bellH / 2f, bellW, bellH);
             }
         }
 
+        mBitmap.getPixels(mPixels, 0, WIDTH, 0, 0, WIDTH, HEIGHT);
+        return true;
+    }
+
+    private String mPendingSignature;
+
+    /** Exposed for the offline preview harness. */
+    Bitmap frameBitmap() {
+        return mBitmap;
+    }
+
+    private void pushFrame() {
+        String signature = mPendingSignature;
         boolean ok = mController.drawSubDisplay(mPixels);
         if (ok) {
             mLastRendered = signature;
@@ -228,32 +391,9 @@ public class CoverWindowRenderer {
     }
 
 
-    // ---- status-row icons, matching the Stock layout: [no-SIM] | NN% [battery] ----
+    /** Logged once: the SystemProperties fallback is noisy if it warns every render. */
+    private static boolean sSimPropWarned = false;
 
-    /** Fills an axis-aligned rectangle, clipped to the buffer. */
-    private void fillRect(int x, int y, int w, int h, int color) {
-        for (int py = y; py < y + h; py++) {
-            if (py < 0 || py >= HEIGHT) continue;
-            int row = py * WIDTH;
-            for (int px = x; px < x + w; px++) {
-                if (px < 0 || px >= WIDTH) continue;
-                mPixels[row + px] = color;
-            }
-        }
-    }
-
-    /** One-pixel-thick rectangle outline. */
-    private void strokeRect(int x, int y, int w, int h, int color) {
-        fillRect(x, y, w, 1, color);
-        fillRect(x, y + h - 1, w, 1, color);
-        fillRect(x, y, 1, h, color);
-        fillRect(x + w - 1, y, 1, h, color);
-    }
-
-    /**
-     * Vertical battery with a nub on top and a fill proportional to {@code pct}, like Stock's.
-     * Occupies {@code w} x {@code h} starting at (x, y), nub included.
-     */
     /**
      * Number of active notifications, via dumpsys because a NotificationListenerService would
      * mean shipping an app. Cached briefly: the render tick runs every second and this dump is
@@ -294,75 +434,96 @@ public class CoverWindowRenderer {
     }
 
     /**
-     * Bell glyph, 6x7 so it scales to 12x14 and lines up with the scale-2 text beside it.
-     *
-     * Drawn as an explicit bitmap rather than computed from a taper: the computed version came
-     * out as two diagonal side-strokes under a dome, which reads as an umbrella, not a bell.
-     * At this size the silhouette has to be stated outright -- the flat rim and the clapper
-     * hanging below it are what make it legible.
+    /**
+     * Battery outline with a proportional fill, Stock's 18x18.
      */
-    private static final String[] BELL = {
-        "  ##  ",
-        " #### ",
-        " #  # ",
-        "#    #",
-        "#    #",
-        "######",
-        "  ##  ",
-    };
+    private void drawBatteryIcon(float x, float y, float w, float h, int pct) {
+        float bodyW = w * 0.82f;
+        float capW = w - bodyW;
+        float bodyH = h * 0.55f;
+        float top = y + (h - bodyH) / 2f;
 
-    private void drawBell(int x, int y, int scale, int color) {
-        for (int row = 0; row < BELL.length; row++) {
-            String line = BELL[row];
-            for (int col = 0; col < line.length(); col++) {
-                if (line.charAt(col) == '#') {
-                    fillRect(x + col * scale, y + row * scale, scale, scale, color);
-                }
-            }
-        }
-    }
+        setStyle(mIconPaint, sStyleStroke);
+        mIconPaint.setStrokeWidth(1.4f);
+        RectF body = new RectF(x, top, x + bodyW, top + bodyH);
+        mCanvas.drawRoundRect(body, 2f, 2f, mIconPaint);
 
-    private void drawBattery(int x, int y, int w, int h, int pct, int color) {
-        int nubW = Math.max(2, w / 3);
-        int nubH = 2;
-        fillRect(x + (w - nubW) / 2, y, nubW, nubH, color);
-
-        int bodyY = y + nubH;
-        int bodyH = h - nubH;
-        strokeRect(x, bodyY, w, bodyH, color);
+        setStyle(mIconPaint, sStyleFill);
+        // terminal nub
+        float nubH = bodyH * 0.45f;
+        mCanvas.drawRect(x + bodyW, top + (bodyH - nubH) / 2f,
+                x + bodyW + capW * 0.7f, top + (bodyH + nubH) / 2f, mIconPaint);
 
         if (pct > 0) {
-            int innerH = bodyH - 4;
-            int fillH = Math.max(1, Math.round(innerH * Math.min(100, pct) / 100f));
-            // Batteries fill from the bottom.
-            fillRect(x + 2, bodyY + 2 + (innerH - fillH), w - 4, fillH, color);
+            float inset = 2.2f;
+            float maxW = bodyW - inset * 2;
+            float fill = Math.max(1f, maxW * Math.min(100, pct) / 100f);
+            mCanvas.drawRect(x + inset, top + inset,
+                    x + inset + fill, top + bodyH - inset, mIconPaint);
         }
     }
 
-    /** SIM-card outline (notched top-right corner) with a slash: the "no SIM" indicator. */
-    private void drawNoSim(int x, int y, int w, int h, int color) {
-        int notch = Math.max(2, w / 3);
-        // Body, leaving the notch corner empty.
-        fillRect(x, y, w - notch, 1, color);                 // top, up to the notch
-        fillRect(x + w - 1, y + notch, 1, h - notch, color); // right, below the notch
-        fillRect(x, y + h - 1, w, 1, color);                 // bottom
-        fillRect(x, y, 1, h, color);                         // left
-        // The chamfer across the notched corner.
-        for (int i = 0; i < notch; i++) {
-            int px = x + w - notch + i;
-            int py = y + i;
-            fillRect(px, py, 1, 1, color);
-        }
-        // Slash, bottom-left to top-right.
-        int steps = Math.max(w, h);
-        for (int i = 0; i <= steps; i++) {
-            int px = x + Math.round((w - 1) * (i / (float) steps));
-            int py = y + (h - 1) - Math.round((h - 1) * (i / (float) steps));
-            fillRect(px, py, 1, 1, color);
-        }
+    /** A SIM outline with a slash through it: no SIM present. */
+    private void drawNoSimIcon(float x, float y, float w, float h) {
+        setStyle(mIconPaint, sStyleStroke);
+        mIconPaint.setStrokeWidth(1.3f);
+
+        // SIM body with a clipped top-right corner
+        float cut = w * 0.34f;
+        Path sim = new Path();
+        sim.moveTo(x, y);
+        sim.lineTo(x + w - cut, y);
+        sim.lineTo(x + w, y + cut);
+        sim.lineTo(x + w, y + h);
+        sim.lineTo(x, y + h);
+        sim.close();
+        mCanvas.drawPath(sim, mIconPaint);
+
+        // the slash
+        mCanvas.drawLine(x - 1f, y + h + 1f, x + w + 1f, y - 1f, mIconPaint);
     }
 
-    private static boolean sSimPropWarned;
+    /**
+     * Notification bell.
+     *
+     * Drawn with curves rather than as a small bitmap. Three earlier bitmap attempts read as an
+     * umbrella, a mushroom, and Stock's own calendar-ish glyph; at this size the recognisable
+     * cues are the shoulders curving out from a narrow crown, a flat rim wider than the body,
+     * and a separate clapper below it.
+     */
+    private void drawBell(float x, float y, float w, float h) {
+        setStyle(mIconPaint, sStyleFill);
+
+        float cx = x + w / 2f;
+        float rimY = y + h * 0.74f;
+        float bodyTop = y + h * 0.12f;
+
+        // Crown
+        float crownR = w * 0.09f;
+        mCanvas.drawCircle(cx, y + crownR, crownR, mIconPaint);
+
+        // Body: narrow at the top, flaring to the rim.
+        Path body = new Path();
+        body.moveTo(cx - w * 0.16f, bodyTop);
+        body.cubicTo(cx - w * 0.50f, y + h * 0.30f,
+                     cx - w * 0.46f, rimY - h * 0.06f,
+                     cx - w * 0.50f, rimY);
+        body.lineTo(cx + w * 0.50f, rimY);
+        body.cubicTo(cx + w * 0.46f, rimY - h * 0.06f,
+                     cx + w * 0.50f, y + h * 0.30f,
+                     cx + w * 0.16f, bodyTop);
+        body.close();
+        mCanvas.drawPath(body, mIconPaint);
+
+        // Flat rim, slightly wider than the body.
+        mCanvas.drawRect(x - w * 0.04f, rimY, x + w * 1.04f, rimY + Math.max(1f, h * 0.07f),
+                mIconPaint);
+
+        // Clapper
+        mCanvas.drawCircle(cx, rimY + h * 0.16f, Math.max(1f, w * 0.13f), mIconPaint);
+    }
+
+
 
     /**
      * True when no SIM is present.

@@ -15,7 +15,7 @@ kernel enumerates it over USB and then stalls, because the process that would ta
 - A framework bridge exposing `IDisplayManagerEx` as the `dualscreen_ex` binder service
 - **The cover window** — the strip visible when the case is folded shut — showing clock,
   weekday/date, battery percentage with a proportional battery icon, a no-SIM indicator, and a
-  notification count
+  notification count, drawn in LG's own font with Stock's metrics
 - **Hinge-driven power sequencing**: unfolding the case powers the accessory up, folding it
   powers it down, automatically
 - **The DS2's main panel** — the DisplayPort link comes up and Android enumerates the second
@@ -300,6 +300,9 @@ docs/       the full reverse-engineering write-up and raw evidence
 - Original work here (`CoverDisplayPowerBridge`, `CoverWindowRenderer`, `TinyFont`,
   `DualScreenBridgeDaemon`, the module scripts, the VINTF fragments, the docs) is under the
   license in [`LICENSE`](LICENSE).
+- `module/fonts/font_lg_smart_ui_number_regular.ttf` is **LG's font**, taken from their
+  `LGSubDisplay` app so the clock matches Stock. 3.4KB, digits and punctuation only. Same
+  copyright status as the HAL binaries.
 - `SubLcdController.java` is **derived from LG's stock `services.jar`** (decompiled and adapted).
   It is included because the bridge cannot work without it. It is not original work and is not
   covered by that license.
