@@ -141,17 +141,43 @@ Everything below is reachable through HAL methods the module **already has runni
 
 ### 1. Touch input on the second screen
 
-An IDC (`module/system/vendor/usr/idc/Vendor_1004_Product_637a.idc`) binds the digitizer
-(`1004:637a`) to the external display via `touch.displayId = local:4`. **Written but not yet
-confirmed working.**
+**The IDC works. The digitizer is the problem.** This was tested end to end, so do not spend time
+re-checking the routing.
 
-```sh
-dumpsys input | grep -A3 "LGE LMV600N"   # want AssociatedDisplay isExternal=true, non-empty displayId
+`module/system/vendor/usr/idc/Vendor_1004_Product_637a.idc` is applied exactly as written, and
+`local:4` is confirmed correct (Android reports the DS2 as `uniqueId="local:4"`):
+
+```text
+Touch Input Mapper (mode - DIRECT):
+  DeviceType: TOUCH_SCREEN
+  AssociatedDisplay: isExternal=true, displayId='local:4'
+  OrientationAware: true
+  X: min=0, max=1079.001   Y: min=0, max=2459.000
 ```
 
-If the binding alone is not enough, `IDualScreen` also exposes `DoTouchReset()` and
-`set_touch_perf()`, neither of which the bridge calls. The `local:4` unique id should be
-confirmed rather than assumed — it may vary.
+`hid-multitouch` binds the panel, parses its descriptor and creates both the input devices and
+`/dev/hidraw0`. Everything above the panel is in place.
+
+What is missing is the panel itself: **it emits no HID reports at all.** Under sustained swiping,
+`getevent` records zero events on the DS2 nodes while the built-in screen produces thousands in
+the same capture, and `cat /dev/hidraw0` blocks indefinitely rather than returning data. So the
+touch controller is enumerated but never switched on.
+
+The likely next step is the `IDualScreen` touch methods, none of which the bridge currently calls:
+
+```text
+getTouchFirmwareVersion()   cheap probe -- a real version means the controller is alive
+DoTouchReset()              what stock most plausibly issues on attach
+set_touch_perf()
+DoTouchFirmwareUpgrade()
+```
+
+Reproducing the check:
+
+```sh
+adb shell "su -c 'getevent -lt'"        # swipe the DS2, then the main screen as a control
+adb shell "su -c 'cat /dev/hidraw0'"    # blocks with no output = controller silent
+```
 
 ### 2. Brightness
 
