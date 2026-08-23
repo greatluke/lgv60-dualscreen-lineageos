@@ -192,10 +192,22 @@ attach, not once — the controller returns to U0 each time.
 
 ### 2. Brightness — **DONE**
 
-Android's slider only drives the built-in panel, and the DS2 is an ordinary external display with
-no control surface, so it used to sit at whatever level it powered on with. `BrightnessSync`
-polls `panel0-backlight` and mirrors it through `IDualScreen.setBrightness()`, which makes the
-normal UI slider and adaptive brightness control both screens.
+`BrightnessSync` follows the policy Stock implements in `CoverDisplayPowerController`, rather
+than simply mirroring the main panel.
+
+Stock gives the DS2 its own persisted brightness in
+`Settings.Secure.screen_brightness_for_coverdisplay`, with
+`Settings.Secure.global_screen_brightness_mode` deciding whether that value tracks the main screen
+or is set independently. Both are honoured here, defaulting to "follow" since neither exists on a
+LineageOS install.
+
+Two things worth taking from Stock rather than deriving:
+
+- **The DS2's range is 0..255** — Stock's `clampAbsoluteBrightness()` is literally
+  `MathUtils.constrain(value, 0, 255)`.
+- **Stock feeds it the brightness *setting*, not the panel's backlight register.** These are
+  different numbers: `panel0-backlight` runs 0..365 with the main panel's curve already applied,
+  so scaling that into 0..255 applies the curve twice.
 
 Notes for anyone touching it:
 

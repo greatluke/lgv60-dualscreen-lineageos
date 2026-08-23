@@ -5,52 +5,60 @@ import android.util.Slog;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
+import java.io.InputStreamReader;
 
 import vendor.lge.hardware.dualscreen.V1_0.IDualScreen;
 
 /**
- * Keeps the DS2's backlight in step with the built-in panel's.
+ * Drives the DS2's backlight, following the policy Stock implements in
+ * {@code CoverDisplayPowerController}.
  *
- * Android's brightness slider only drives the built-in display; the DS2 is an ordinary external
- * display with no control surface of its own, so without this it sits at whatever level it
- * powered on with. Mirroring the built-in panel means the normal UI slider (and adaptive
- * brightness) effectively control both.
+ * Stock does not simply mirror the built-in panel. The DS2 gets its own persisted brightness in
+ * {@code Settings.Secure.screen_brightness_for_coverdisplay}, and a separate flag,
+ * {@code Settings.Secure.global_screen_brightness_mode}, decides whether that value tracks the
+ * main screen or is set independently:
  *
- * The built-in panel's live value is readable from panel0-backlight. Note panel0-backlight-ex is
- * vestigial -- it accepts writes and its actual_brightness stays 0 -- so it is not a usable source
- * or sink. The DS2 side goes through IDualScreen.setBrightness().
+ * <pre>
+ *   int t = BrightnessSynchronizer.brightnessFloatToInt(target);
+ *   if (mIsGlobalScreenBrightnessMode &amp;&amp; ...) {
+ *       Settings.Secure.putInt(..., "screen_brightness_for_coverdisplay", t);
+ *   }
+ * </pre>
  *
- * Scale: the built-in panel runs 0..max_brightness (365 on this device). The DS2's range is not
- * documented and the HAL range-checks nothing -- it returns 0 for values well past any plausible
- * maximum -- so DS2_MAX below is an empirical constant. Adjust it if the panels do not match.
+ * Two details worth copying rather than guessing:
+ *
+ *  - The DS2's range is 0..255. Stock's {@code clampAbsoluteBrightness()} is
+ *    {@code MathUtils.constrain(value, 0, 255)}. An earlier version of this class used 255 as an
+ *    eyeballed constant; it happens to be right, and now it is right for a reason.
+ *  - Stock feeds it the *brightness setting*, not the panel's raw backlight register. Those are
+ *    not the same number -- {@code panel0-backlight} runs 0..365 and has the main panel's curve
+ *    already applied, so scaling it into 0..255 applies that curve twice.
+ *
+ * Reading the setting means shelling out, since a bare app_process has no Context and therefore
+ * no ContentResolver. To keep that off the hot path, the cheap sysfs backlight file is polled for
+ * *change detection* only, and the authoritative setting is read just when it actually moves.
  */
 public final class BrightnessSync {
 
     private static final String TAG = "BrightnessSync";
 
-    private static final String MAIN_BRIGHTNESS = "/sys/class/backlight/panel0-backlight/brightness";
-    private static final String MAIN_MAX        = "/sys/class/backlight/panel0-backlight/max_brightness";
+    /** Cheap change-detector. Not used as the brightness value itself -- see the class comment. */
+    private static final String MAIN_BACKLIGHT = "/sys/class/backlight/panel0-backlight/brightness";
 
-    /** Empirical top of the DS2's brightness range. See the class comment. */
+    /** Stock's own range for the DS2: MathUtils.constrain(value, 0, 255). */
+    private static final int DS2_MIN = 0;
     private static final int DS2_MAX = 255;
 
-    /**
-     * Poll interval. This is deliberately short: the panel is being followed by eye, and a
-     * second of lag is very visible when the slider moves. Reading two small sysfs files at this
-     * rate is negligible, and the HAL is only called when the value actually changes.
-     */
     private static final long POLL_MS = 120L;
+    /** The mode flag changes rarely; no need to shell out for it often. */
+    private static final long MODE_TTL_MS = 5000L;
+    /** How often to re-read the DS2's own setting when it is not following the main screen. */
+    private static final long OWN_TTL_MS = 1000L;
 
-    /** Cached HAL proxy. Resolving it per push cost a service-manager lookup each time. */
     private static volatile IDualScreen sHal;
-
-    /**
-     * Forces the next poll to push even if the computed value has not changed. The DS2 forgets
-     * its brightness across a power cycle while lastPushed does not, so the two fall out of step
-     * after an attach unless this is called.
-     */
     private static volatile boolean sForcePush;
 
+    /** Forces the next poll to push even if the value has not changed. */
     public static void resync() {
         sForcePush = true;
     }
@@ -65,28 +73,67 @@ public final class BrightnessSync {
     }
 
     private static void loop() {
-        int mainMax = readInt(MAIN_MAX, 365);
-        if (mainMax <= 0) {
-            mainMax = 365;
-        }
-        Slog.i(TAG, "started; main panel max=" + mainMax + ", DS2 max=" + DS2_MAX);
+        Slog.i(TAG, "started; DS2 range " + DS2_MIN + ".." + DS2_MAX
+                + " (Stock clampAbsoluteBrightness)");
 
+        int lastBacklight = -1;
         int lastPushed = -1;
+        boolean globalMode = true;
+        long modeCheckedAt = 0L;
+        long ownCheckedAt = 0L;
+
         while (true) {
             try {
-                int main = readInt(MAIN_BRIGHTNESS, -1);
-                if (main >= 0) {
-                    int target = Math.round((main * (float) DS2_MAX) / mainMax);
-                    if (target < 0) target = 0;
-                    if (target > DS2_MAX) target = DS2_MAX;
+                long now = android.os.SystemClock.elapsedRealtime();
 
-                    // Only talk to the HAL when the value actually moves; adaptive brightness
-                    // nudges the panel constantly and there is no point relaying every step.
-                    if (target != lastPushed || sForcePush) {
-                        if (push(target)) {
-                            lastPushed = target;
-                            sForcePush = false;
-                        }
+                if (now - modeCheckedAt >= MODE_TTL_MS) {
+                    modeCheckedAt = now;
+                    // Default 1: following the main screen is the sane default when Stock's
+                    // settings have never been written, which is the case on LineageOS.
+                    globalMode = settingInt("secure", "global_screen_brightness_mode", 1) != 0;
+                }
+
+                int backlight = readInt(MAIN_BACKLIGHT, -1);
+                boolean mainMoved = (backlight != lastBacklight);
+                lastBacklight = backlight;
+
+                int target;
+                if (globalMode) {
+                    // Only shell out when the panel actually moved, or when forced.
+                    if (!mainMoved && !sForcePush && lastPushed >= 0) {
+                        Thread.sleep(POLL_MS);
+                        continue;
+                    }
+                    int setting = settingInt("system", "screen_brightness", -1);
+                    if (setting < 0) {
+                        Thread.sleep(POLL_MS);
+                        continue;
+                    }
+                    target = clamp(setting);
+                    // Mirror Stock, which persists the value it applied.
+                    if (target != lastPushed) {
+                        putSetting("secure", "screen_brightness_for_coverdisplay", target);
+                    }
+                } else {
+                    // Independent: whatever the DS2's own setting says. Nothing local signals
+                    // when that changes, so it is polled on a timer rather than on an event.
+                    if (!sForcePush && lastPushed >= 0 && now - ownCheckedAt < OWN_TTL_MS) {
+                        Thread.sleep(POLL_MS);
+                        continue;
+                    }
+                    ownCheckedAt = now;
+                    int own = settingInt("secure", "screen_brightness_for_coverdisplay", -1);
+                    if (own < 0) {
+                        Thread.sleep(POLL_MS);
+                        continue;
+                    }
+                    target = clamp(own);
+                }
+
+                if (target != lastPushed || sForcePush) {
+                    if (push(target)) {
+                        lastPushed = target;
+                        sForcePush = false;
                     }
                 }
                 Thread.sleep(POLL_MS);
@@ -101,6 +148,11 @@ public final class BrightnessSync {
                 }
             }
         }
+    }
+
+    /** Stock's clampAbsoluteBrightness. */
+    private static int clamp(int v) {
+        return Math.max(DS2_MIN, Math.min(DS2_MAX, v));
     }
 
     private static boolean push(int value) {
@@ -120,11 +172,48 @@ public final class BrightnessSync {
             }
             return true;
         } catch (RemoteException e) {
-            sHal = null;   // HAL restarted; re-resolve on the next push
+            sHal = null;   // HAL restarted; re-resolve next time
             return false;
         } catch (Throwable t) {
             sHal = null;
             return false;
+        }
+    }
+
+    private static int settingInt(String namespace, String key, int def) {
+        String s = exec("settings", "get", namespace, key);
+        if (s == null) {
+            return def;
+        }
+        s = s.trim();
+        if (s.isEmpty() || "null".equals(s)) {
+            return def;
+        }
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
+    private static void putSetting(String namespace, String key, int value) {
+        exec("settings", "put", namespace, key, String.valueOf(value));
+    }
+
+    private static String exec(String... cmd) {
+        Process p = null;
+        try {
+            p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+            String out;
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                out = r.readLine();
+            }
+            p.waitFor();
+            return out;
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            if (p != null) p.destroy();
         }
     }
 
