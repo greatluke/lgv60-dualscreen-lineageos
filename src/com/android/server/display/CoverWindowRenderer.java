@@ -55,21 +55,11 @@ public class CoverWindowRenderer {
     private final int[] mPixels = new int[WIDTH * HEIGHT];
 
     /** LG's own clock font, lifted from Stock's LGSubDisplay. Only 3.4KB -- digits and colon. */
-    /**
-     * Optional caption, e.g. "LineageOS". Read from a file so it can be changed without a
-     * rebuild; empty or missing means the layout is exactly as before.
-     */
-    private static final String LABEL_FILE =
-            "/data/adb/modules/lge_ds2_hal_shim/cover_label.txt";
-
     private static final String LG_NUMBER_FONT =
             "/data/adb/modules/lge_ds2_hal_shim/fonts/font_lg_smart_ui_number_regular.ttf";
 
     // Stock's metrics, from LGSubDisplay's dimens.xml.
     private static final float FONT_TIME = 48f;
-    /** Clock shrinks slightly when a caption is shown, to make vertical room for it. */
-    private static final float FONT_TIME_WITH_LABEL = 38f;
-    private static final float FONT_LABEL = 13f;
     private static final float FONT_DATE = 20f;
     private static final float FONT_BATTERY = 13f;
     private static final int MARGIN_START = 2;
@@ -122,8 +112,7 @@ public class CoverWindowRenderer {
 
     private Bitmap mBitmap;
     private Canvas mCanvas;
-    private Paint mClockPaint, mClockSmallPaint, mDatePaint, mBattPaint, mIconPaint;
-    private Paint mLabelPaint;
+    private Paint mClockPaint, mDatePaint, mBattPaint, mIconPaint;
 
     private void initGraphics() {
         if (mCanvas != null) {
@@ -146,8 +135,6 @@ public class CoverWindowRenderer {
         mCanvas = new Canvas(mBitmap);
 
         mClockPaint = textPaint(FONT_TIME, number);
-        mClockSmallPaint = textPaint(FONT_TIME_WITH_LABEL, number);
-        mLabelPaint = textPaint(FONT_LABEL, Typeface.DEFAULT);
         mDatePaint = textPaint(FONT_DATE, Typeface.DEFAULT);
         mBattPaint = textPaint(FONT_BATTERY, Typeface.DEFAULT);
         mIconPaint = new Paint();
@@ -291,14 +278,9 @@ public class CoverWindowRenderer {
 
         Date now = new Date();
         String clock = mClockFmt.format(now);
-        String label = coverLabel();
-        boolean hasLabel = !label.isEmpty();
-
-        // A caption steals vertical space, so the clock drops to the smaller size when one is set.
-        Paint clockPaint = hasLabel ? mClockSmallPaint : mClockPaint;
 
         // Space left for the right-hand block, measured from the clock actually rendered.
-        float clockW = clockPaint.measureText(clock);
+        float clockW = mClockPaint.measureText(clock);
         int blockLeft = (int) Math.ceil(MARGIN_START + clockW) + 6;
         int avail = WIDTH - blockLeft - MARGIN_END;
 
@@ -318,8 +300,7 @@ public class CoverWindowRenderer {
         String status = (battery >= 0 ? battery + "%" : "--") + (charging ? "+" : "");
         int notifs = activeNotifications();
 
-        String signature = clock + "|" + date + "|" + status + "|" + noSim + "|" + notifs
-                + "|" + label;
+        String signature = clock + "|" + date + "|" + status + "|" + noSim + "|" + notifs;
         if (signature.equals(mLastRendered)) {
             return false;
         }
@@ -330,19 +311,8 @@ public class CoverWindowRenderer {
         // Clock: vertically centred on the real font metrics, not on the glyph box.
         // Paint.FontMetrics cannot be named here (enjarify drops nested classes); ascent() and
         // descent() give the same values.
-        //
-        // With a caption set, the caption and clock are centred as a pair, caption on top.
-        float clockH = -clockPaint.ascent() + clockPaint.descent();
-        if (hasLabel) {
-            float labelH = -mLabelPaint.ascent() + mLabelPaint.descent();
-            float pairTop = (HEIGHT - (labelH + clockH)) / 2f;
-            mCanvas.drawText(label, MARGIN_START, pairTop - mLabelPaint.ascent(), mLabelPaint);
-            mCanvas.drawText(clock, MARGIN_START,
-                    pairTop + labelH - clockPaint.ascent(), clockPaint);
-        } else {
-            float clockBaseline = (HEIGHT - (clockPaint.ascent() + clockPaint.descent())) / 2f;
-            mCanvas.drawText(clock, MARGIN_START, clockBaseline, clockPaint);
-        }
+        float clockBaseline = (HEIGHT - (mClockPaint.ascent() + mClockPaint.descent())) / 2f;
+        mCanvas.drawText(clock, MARGIN_START, clockBaseline, mClockPaint);
 
         // Right-hand block: date above, status row below, both right-aligned like Stock.
         final int rightEdge = WIDTH - MARGIN_END;
@@ -420,30 +390,6 @@ public class CoverWindowRenderer {
         }
     }
 
-
-    private String mLabel = "";
-    private long mLabelCheckedAt = 0L;
-    private static final long LABEL_TTL_MS = 10_000L;
-
-    /** Caption text, or "" when unset. Re-read periodically so edits show up without a restart. */
-    private String coverLabel() {
-        long now = android.os.SystemClock.elapsedRealtime();
-        if (now - mLabelCheckedAt < LABEL_TTL_MS) {
-            return mLabel;
-        }
-        mLabelCheckedAt = now;
-        String v = readString(LABEL_FILE, "").trim();
-        // One line only, and short enough not to crowd the clock.
-        int nl = v.indexOf('\n');
-        if (nl >= 0) {
-            v = v.substring(0, nl).trim();
-        }
-        if (v.length() > 16) {
-            v = v.substring(0, 16);
-        }
-        mLabel = v;
-        return mLabel;
-    }
 
     /** Logged once: the SystemProperties fallback is noisy if it warns every render. */
     private static boolean sSimPropWarned = false;
