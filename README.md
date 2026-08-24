@@ -87,9 +87,9 @@ for the full derivation.
 
 Requires an LG V60 ThinQ (`timelm`) running LineageOS, rooted with Magisk.
 
-1. Get `lge_ds2_hal_shim.zip` — from the Releases page, or build it yourself (below)
+1. Get `lge_ds2_hal_shim-v0.2.zip` — from the Releases page, or build it yourself (below)
 2. Install it: Magisk app → Modules → Install from storage, or
-   `adb shell su -c 'magisk --install-module /sdcard/Download/lge_ds2_hal_shim.zip'`
+   `adb shell su -c 'magisk --install-module /sdcard/Download/lge_ds2_hal_shim-v0.2.zip'`
 3. Reboot
 
 Verify:
@@ -137,6 +137,29 @@ With that set, attaching the Dual Screen brings up the display prompt:
 Both panels running under LineageOS, the DS2 on the left showing the clock:
 
 ![Dual Screen running on LineageOS](images/dualscreen_on_los.jpg)
+
+## Changelog
+
+**v0.2** (2026-08-24)
+
+- **Touch on the second screen** — the digitizer is taken out of LPWG (gesture-only) mode on
+  every attach, so apps can be opened and used on the DS2 directly (see TO-DO §1 for the
+  diagnosis)
+- **Dual-screen screenshots** — Power+VolDown produces one image containing both panels
+- **Cover window** — real text rendered in LG's font with Stock's metrics, and a notification
+  count above the clock
+- **Brightness tracking** — the DS2 follows the built-in panel live, following Stock's
+  brightness policy rather than mirroring the panel's backlight register, with a perceptual
+  (gamma) curve so the slider feels right (TO-DO §2)
+- **Attach reliability** — the intermittent `error -108` attach failure is root-caused as a
+  kernel workqueue deadlock and a fix is available, validated across repeated cold boots
+  (see *Known issue*)
+
+**v0.1** (2026-08-22)
+
+- First release: DS2 detection and enumeration, the stock LG HALs on LineageOS, the framework
+  bridge, the cover window (clock/date/battery/no-SIM, drawn with a bitmap font), hinge-driven
+  power sequencing, and the second screen over DisplayPort in mirror and desktop mode
 
 ## TO-DO — reaching parity with stock
 
@@ -237,7 +260,7 @@ DS2, at which point the fingerprint reader is on the wrong panel and the phone c
 That is a bad failure for a convenience feature, and the trigger for it is not yet well enough
 understood to ship safely.
 
-The implementation is kept out of tree under `archive/display-swap/` for whoever picks this up.
+The implementation (`DisplaySwap.java`) is kept out of tree for whoever picks this up.
 Note the DS2's display id is **not stable** — it has been observed as both 2 and 4 across
 attaches, so it has to be resolved fresh each time rather than cached.
 
