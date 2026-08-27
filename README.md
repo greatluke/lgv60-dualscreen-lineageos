@@ -44,13 +44,22 @@ battery icon, and a no-SIM indicator (this unit has no SIM installed):
 
 ![DS2 cover window running on LineageOS](images/dualscreen_frontcover.jpg)
 
-Running on LineageOS 23.2 (Android 16):
+Both panels running under LineageOS, home screen on the left, the DS2's own launcher on the
+right:
 
-![LineageOS version](images/android_version.png)
+![Dual Screen running on LineageOS](images/dualscreen_home.jpg)
 
-The kernel string in that screenshot ends in `-dirty` because that unit runs a debug kernel used
-during the investigation. **The module does not require it** — it is confirmed working on a
-second V60 running a completely stock LineageOS kernel.
+The DS2's app drawer, 5 columns without labels to match the main screen:
+
+![DS2 app drawer](images/dualscreen_drawer.jpg)
+
+Launching apps, navigating, and switching profiles on the DS2:
+
+https://github.com/user-attachments/assets/0ce8388e-5fa9-4902-abed-4c9c56c9242a
+
+The unit in these shots runs a debug kernel used during the investigation (its version string
+ends in `-dirty`). **The module does not require it** — it is confirmed working on a second V60
+running a completely stock LineageOS kernel.
 
 ## What does not work yet
 
@@ -185,25 +194,6 @@ and it comes up with the display prompt:
   Taskbar and its launch path — is restored by a companion patch to Trebuchet (the launcher).
   See [`docs/taskbar-launch-blocker.md`](docs/taskbar-launch-blocker.md) for the full trace of
   why, and both fixes are one Magisk module, not something you install separately.
-
-Both panels running under LineageOS, home screen on the left, the DS2's own launcher on the
-right:
-
-![Dual Screen running on LineageOS](images/dualscreen_home.jpg)
-
-The DS2's app drawer, 5 columns without labels to match the main screen:
-
-![DS2 app drawer](images/dualscreen_drawer.jpg)
-
-Launching apps, navigating, and switching profiles on the DS2:
-[`images/dualscreen_usage.mp4`](images/dualscreen_usage.mp4)
-
-<!-- GitHub only renders an inline, playable video for a file uploaded through its own web
-     editor (drag-and-drop into the README editor or a PR/issue comment) -- a plain relative
-     link to a file already committed in the repo tree, like the one above, renders as a
-     download link rather than a player. For the inline player: open this file for editing on
-     github.com, drag images/dualscreen_usage.mp4 into the text area, and it inserts a working
-     user-attachments URL you can swap the line above for. -->
 
 ## Changelog
 
