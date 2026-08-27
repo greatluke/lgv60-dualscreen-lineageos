@@ -42,7 +42,7 @@ kernel enumerates it over USB and then stalls, because the process that would ta
 The cover window on LineageOS — clock, weekday/date, battery percentage with a proportional
 battery icon, and a no-SIM indicator (this unit has no SIM installed):
 
-![DS2 cover window running on LineageOS](images/front_cover.jpg)
+![DS2 cover window running on LineageOS](images/dualscreen_frontcover.jpg)
 
 Running on LineageOS 23.2 (Android 16):
 
@@ -186,9 +186,24 @@ and it comes up with the display prompt:
   See [`docs/taskbar-launch-blocker.md`](docs/taskbar-launch-blocker.md) for the full trace of
   why, and both fixes are one Magisk module, not something you install separately.
 
-Both panels running under LineageOS, the DS2 on the left showing the clock:
+Both panels running under LineageOS, home screen on the left, the DS2's own launcher on the
+right:
 
-![Dual Screen running on LineageOS](images/dualscreen_on_los.jpg)
+![Dual Screen running on LineageOS](images/dualscreen_home.jpg)
+
+The DS2's app drawer, 5 columns without labels to match the main screen:
+
+![DS2 app drawer](images/dualscreen_drawer.jpg)
+
+Launching apps, navigating, and switching profiles on the DS2:
+[`images/dualscreen_usage.mp4`](images/dualscreen_usage.mp4)
+
+<!-- GitHub only renders an inline, playable video for a file uploaded through its own web
+     editor (drag-and-drop into the README editor or a PR/issue comment) -- a plain relative
+     link to a file already committed in the repo tree, like the one above, renders as a
+     download link rather than a player. For the inline player: open this file for editing on
+     github.com, drag images/dualscreen_usage.mp4 into the text area, and it inserts a working
+     user-attachments URL you can swap the line above for. -->
 
 ## Changelog
 
