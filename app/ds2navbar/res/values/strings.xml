@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Dual Screen Navigation</string>
+    <string name="service_description">Draws back, home and recents buttons on the LG Dual Screen, which has no navigation bar of its own.</string>
+</resources>

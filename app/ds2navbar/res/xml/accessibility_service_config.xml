@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declares only what the bar needs: no event types, no window content. The service exists to
+     host an overlay on the Dual Screen and call performGlobalAction(); it never inspects the
+     accessibility tree, so it requests no capabilities beyond being bound. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewClicked|typeViewLongClicked|typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/service_description" />

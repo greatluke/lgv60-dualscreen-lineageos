@@ -36,6 +36,20 @@ echo "== dexing =="
 "$D8" --lib "$FRAMEWORK_JAR" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
 cp "$OUT/dex/classes.dex" "$MODULE/dualscreen-bridge.dex"
 
+echo "== building the DS2 desktop-experience fix (RRO + patched Trebuchet) =="
+# Fully reproducible from source; the Trebuchet dex patch additionally needs a rooted phone
+# connected over adb the first time, to pull the stock apk it patches -- see
+# app/ds2-launchfix/build.sh. Cached afterward.
+"$ROOT/app/ds2-desktopfix-rro/build.sh"
+"$ROOT/app/ds2-launchfix/build.sh"
+mkdir -p "$MODULE/system/product/overlay" \
+	"$MODULE/system/system_ext/priv-app/Launcher3QuickStep/oat"
+cp "$ROOT/app/ds2-desktopfix-rro/build/DS2DesktopFix.apk" "$MODULE/system/product/overlay/"
+cp "$ROOT/app/ds2-launchfix/build/Launcher3QuickStep.apk" \
+	"$MODULE/system/system_ext/priv-app/Launcher3QuickStep/"
+# The stock odex was built for the unpatched dex; shadow the directory so it is not considered.
+touch "$MODULE/system/system_ext/priv-app/Launcher3QuickStep/oat/.replace"
+
 echo "== sanity checks =="
 # An illformed VINTF fragment invalidates the ENTIRE device manifest and hangs boot at the LG
 # logo, so validate before packaging. xmllint catches malformed XML; the python check catches
@@ -53,6 +67,7 @@ PY
 done
 sh -n "$MODULE/service.sh"
 sh -n "$MODULE/ds2_supervise.sh"
+sh -n "$MODULE/post-fs-data.sh"
 
 missing=$(find "$MODULE/system/vendor" -name '*.so' | wc -l)
 [ "$missing" -ge 13 ] || { echo "Only $missing libs present -- run ./tools/extract-blobs.sh first" >&2; exit 1; }
@@ -61,6 +76,11 @@ missing=$(find "$MODULE/system/vendor" -name '*.so' | wc -l)
 # built-in screen and the second screen looks unresponsive.
 [ -f "$MODULE/system/vendor/usr/idc/Vendor_1004_Product_637a.idc" ] \
 	|| { echo "missing DS2 touchscreen IDC" >&2; exit 1; }
+
+[ -f "$MODULE/system/product/overlay/DS2DesktopFix.apk" ] \
+	|| { echo "missing DS2DesktopFix.apk -- the RRO build step above should have produced it" >&2; exit 1; }
+[ -f "$MODULE/system/system_ext/priv-app/Launcher3QuickStep/Launcher3QuickStep.apk" ] \
+	|| { echo "missing patched Launcher3QuickStep.apk -- the launchfix build step above should have produced it" >&2; exit 1; }
 
 echo "== packaging =="
 rm -f "$ZIP"

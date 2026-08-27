@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.lge.ds2.desktopfix"
+    android:versionCode="1"
+    android:versionName="0.1">
+
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="34" />
+
+    <application android:hasCode="false" />
+
+    <!-- Static framework overlay, same shape as the ROM's own
+         com.android.frameworks.overlay.sm8250 (targetPackage="android",
+         isStatic=true, no targetName). Static overlays are always enabled and
+         do not require the target resource to be declared <overlayable>.
+         Higher priority than the vendor overlay so this value wins. -->
+    <overlay
+        android:targetPackage="android"
+        android:isStatic="true"
+        android:priority="10" />
+</manifest>

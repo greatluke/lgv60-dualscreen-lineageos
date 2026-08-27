@@ -19,13 +19,21 @@ kernel enumerates it over USB and then stalls, because the process that would ta
 - **Hinge-driven power sequencing**: unfolding the case powers the accessory up, folding it
   powers it down, automatically
 - **The DS2's main panel** — the DisplayPort link comes up and Android enumerates the second
-  screen as a 1080x2460@60 external display. Both mirror and desktop mode work.
+  screen as a 1080x2460@60 external display
 - **Touch on the second screen** — the digitizer is taken out of LPWG mode on attach and its
   input is routed to the DS2's display, so apps can be opened and used on it directly
+- **Launching apps on the DS2** — tap an icon in the DS2 taskbar's app drawer and it launches
+  fullscreen, same as tapping one on the main screen. A static overlay and a patched Trebuchet
+  make this work; see [`docs/taskbar-launch-blocker.md`](docs/taskbar-launch-blocker.md) for how
+- **Navigation on the DS2** — its own taskbar with a working All Apps button, and back/home/
+  recents that each do what they say (home in particular needed its own fix — SystemUI's home
+  key handling ignores which display asked for it)
+- **The DS2's app drawer matches the main screen's** — 5 columns without a name label under
+  every icon, not the denser 6-column labeled grid the DS2's higher reported density otherwise
+  picks for the identical panel
 - **Brightness tracking** — the DS2 follows the built-in panel, so the normal brightness slider
   and adaptive brightness drive both screens
 - **Dual-screen screenshots** — Power+VolDown produces one image containing both panels
-- **Moving apps between screens** — swap the foreground app on each screen, or push/pull one across
 - Everything starts automatically at boot
 
 
@@ -46,9 +54,10 @@ second V60 running a completely stock LineageOS kernel.
 
 ## What does not work yet
 
-The second screen lights up, responds to touch and runs apps, but stock still does more with it.
-In short: apps cannot be *launched* onto it programmatically, and its brightness is not tied to
-the main screen's.
+The second screen lights up, responds to touch, and both launches and navigates apps normally
+now — but stock still does more with it: freeform/multi-window on the DS2 (deliberately not
+offered, see *Using the second screen* below), coupled screen rotation, wide-mode/spanning, and
+moving a running app between screens from the shell (investigated, withdrawn — see TO-DO §3).
 
 See [TO-DO](#to-do--reaching-parity-with-stock) for the full gap list and what each would take.
 
@@ -87,10 +96,14 @@ for the full derivation.
 
 Requires an LG V60 ThinQ (`timelm`) running LineageOS, rooted with Magisk.
 
-1. Get `lge_ds2_hal_shim-v0.2.zip` — from the Releases page, or build it yourself (below)
+1. Get `lge_ds2_hal_shim-v0.3.zip` — from the Releases page, or build it yourself (below)
 2. Install it: Magisk app → Modules → Install from storage, or
-   `adb shell su -c 'magisk --install-module /sdcard/Download/lge_ds2_hal_shim-v0.2.zip'`
+   `adb shell su -c 'magisk --install-module /sdcard/Download/lge_ds2_hal_shim-v0.3.zip'`
 3. Reboot
+
+That single zip is everything — the overlay and the patched launcher it carries are placed into
+`/product` and `/system_ext` by the module itself at boot. There is no separate APK to install,
+open, or grant permissions to.
 
 Verify:
 
@@ -109,36 +122,104 @@ A hang caused by a malformed VINTF fragment happens late enough that `adbd` is r
 often `touch /data/adb/modules/lge_ds2_hal_shim/disable` over adb instead. Do not rely on that in
 general: a failure earlier in boot leaves no adb at all, and safe mode is the only way back.
 
+### Recommended: the ds3 attach-reliability kernel patch
+
+The module works on a completely stock kernel, but the DS2 will occasionally fail to enumerate on
+that kernel — `hub failed to enable device, error -108` in the log, cleared only by a reboot (see
+*Known issue* above). It's a genuine kernel deadlock, not something the module can work around
+from userspace, and the fix is a one-line-of-behavior kernel patch that has been validated across
+repeated cold boots with zero recurrences. Recommended for daily use; skip it if you'd rather not
+touch the kernel, at the cost of an occasional reboot-to-fix.
+
+1. Get the LineageOS `timelm` kernel source and apply the patch:
+   ```sh
+   cd /path/to/timelm/kernel
+   patch -p1 < kernel/0001-lge_ds3-retry-ds_dp_config-on-ENODEV.patch
+   ```
+2. Build it and produce a `boot.img` the normal way for this device/kernel tree.
+3. **Magisk-patch that `boot.img`** (Magisk app → Install → Select and Patch a File), so root
+   survives — do this even if you're already rooted, since a freshly built `boot.img` has no
+   Magisk ramdisk of its own yet.
+4. Flash the patched image. Whichever way you get it onto the device, **back up the current boot
+   partition first**:
+   ```sh
+   adb shell getprop ro.boot.slot_suffix                      # e.g. _b
+   adb shell "su -c 'dd if=/dev/block/bootdevice/by-name/boot_b of=/sdcard/boot_backup.img bs=4M'"
+   adb pull /sdcard/boot_backup.img                            # off the device, somewhere safe
+   ```
+   Then either flash normally through fastboot (`fastboot flash boot_b magisk_patched.img`), or,
+   if the phone won't enter fastboot via `adb reboot bootloader` (it doesn't on some V60 units),
+   write it directly from a rooted shell — this is what Magisk's own Direct Install does:
+   ```sh
+   adb push magisk_patched.img /data/local/tmp/
+   adb shell "su -c 'dd if=/data/local/tmp/magisk_patched.img of=/dev/block/bootdevice/by-name/boot_b bs=4M && sync'"
+   ```
+5. Reboot **with the Dual Screen attached from power-on** — that's the specific condition that
+   triggers the bug, so it's also the only way to confirm the patch actually caught it. Expect no
+   `error -108` in the log this time.
+
+If a flash goes wrong, restore from `boot_backup.img` the same way (swap `if=`/`of=` in the `dd`
+command above) — from a rooted shell if you still have adb, or via fastboot from the backup if not.
+
+Full derivation, the exact blocked-task stacks that identified the deadlock, and more detail on
+each step above: [`kernel/README.md`](kernel/README.md) and
+[`docs/dualscreen-attach-flow.md`](docs/dualscreen-attach-flow.md).
+
 ## Using the second screen
 
-**Desktop mode must be enabled in Developer options first.** Without it the second screen is
-only offered as a mirror, and Android will not treat it as a display that can host its own
-windows.
-
-Settings → System → Developer options → **Force desktop mode on secondary displays**, then
-reboot. Equivalent over adb:
-
-```sh
-adb shell settings put global force_desktop_mode_on_external_displays 1
-adb reboot
-```
-
-(The exact wording of the toggle varies a little between LineageOS builds — look for "desktop
-mode" among the developer options. The `settings` key above is the one that actually matters.)
-
-With that set, attaching the Dual Screen brings up the display prompt:
+No developer-option toggle needed — the module sets what that toggle would have set
+(`persist.wm.debug.desktop_experience_devopts`) itself, every boot, since it's the only way to
+turn on a flag this build doesn't otherwise expose a route to (see
+[`docs/taskbar-launch-blocker.md`](docs/taskbar-launch-blocker.md)). Just attach the Dual Screen
+and it comes up with the display prompt:
 
 ![Connect to external display prompt](images/external_display.png)
 
 - **Mirror** duplicates the main screen. This works well.
-- **Desktop** treats the DS2 as an independent display. The display itself works, but see
-  *What does not work yet* above — touch routing and launching apps onto it are still incomplete.
+- **Desktop** hosts its own windows on the DS2 — tap an icon in its taskbar's app drawer and it
+  launches fullscreen, with a working All Apps button and back/home/recents underneath. Freeform
+  windowing itself is deliberately *not* offered here: the module ships a static overlay
+  (`config_isDesktopModeSupported=false`) that stops the desktop-mode stack from ever trying to
+  build a freeform window on the DS2, because this hardware cannot create one and the attempt
+  used to fail every app launch silently. What that overlay would otherwise disable — the
+  Taskbar and its launch path — is restored by a companion patch to Trebuchet (the launcher).
+  See [`docs/taskbar-launch-blocker.md`](docs/taskbar-launch-blocker.md) for the full trace of
+  why, and both fixes are one Magisk module, not something you install separately.
 
 Both panels running under LineageOS, the DS2 on the left showing the clock:
 
 ![Dual Screen running on LineageOS](images/dualscreen_on_los.jpg)
 
 ## Changelog
+
+**v0.3** (2026-08-26)
+
+- **Launching apps on the DS2** — tapping an icon in the DS2 taskbar's app drawer used to do
+  nothing. Root-caused to four separate points that each independently dropped the launch (an
+  aconfig flag this build doesn't ship, a UI-controller branch that only ever no-ops without an
+  Overview, a rule that routed any external-display launch into a freeform desk this hardware
+  can't create, and connected-display taskbar auto-stash hiding the bar with no way back); fixed
+  with a static overlay plus a five-point Trebuchet dex patch. See
+  [`docs/taskbar-launch-blocker.md`](docs/taskbar-launch-blocker.md) for the full trace
+- **DS2 taskbar decluttered** — the 3 folders that were mirrored in from the phone's own
+  home-screen hotseat no longer show on the DS2's taskbar; the pins themselves and the main
+  screen are untouched
+- **DS2 home button fixed** — it silently did nothing, because SystemUI's key-event home
+  handling resolves home against the default display regardless of which display asked for it.
+  Now starts that display's own home directly from Trebuchet instead, bypassing the SystemUI
+  call
+- **One module** — the desktop-experience fix above and the HAL shim used to be two separate
+  Magisk modules; they're now one (`lge_ds2_hal_shim`), so there's a single thing to install and
+  a single thing to disable if something goes wrong
+- **No Developer options step** — the module now sets
+  `persist.wm.debug.desktop_experience_devopts` itself every boot, which the DS2 Taskbar needs to
+  exist at all on this build. This was previously left set from earlier debugging on the test
+  phone rather than shipped, so a genuinely fresh install would have booted to a DS2 with no
+  Taskbar and no clue why
+- **DS2 app drawer matches the main screen** — 5 columns without labels, not the denser
+  6-column labeled grid its higher reported density otherwise resolves to for the identical
+  panel. A `wm density` override was tried first and reverted — it fixes the grid but also
+  breaks the All Apps button's touch target
 
 **v0.2** (2026-08-24)
 
@@ -245,6 +326,12 @@ Notes for anyone touching it:
 
 ### 3. Launching and moving apps between screens — **investigated, withdrawn**
 
+**Note:** this item is about a different mechanism than ordinary launching. Tapping an icon in
+the DS2's own taskbar is the normal path and works as of v0.3 — see the changelog and
+[`docs/taskbar-launch-blocker.md`](docs/taskbar-launch-blocker.md). What follows is specifically
+about the privileged `am start --display` / `am display move-stack` shell commands, kept
+withdrawn for the reason below.
+
 The mechanism works and is not permission-blocked. This was previously listed as needing the
 `INTERNAL_SYSTEM_WINDOW` signature permission; that was wrong, and measured from `adb shell`
 (uid 2000). `ActivityManagerService.checkComponentPermission` grants unconditionally to uid 0, so
@@ -319,6 +406,7 @@ The optional kernel patch under [`kernel/`](kernel/) is built separately against
 ```text
 module/     the Magisk module: scripts, VINTF fragments, init .rc files, IDC
 src/        the framework bridge (Java, compiled to dualscreen-bridge.dex)
+app/        source for the RRO and the Trebuchet dex patch (tools/build.sh folds both into module/)
 tools/      blob extraction and the module build
 kernel/     optional kernel patch for the intermittent-attach deadlock
 docs/       the full reverse-engineering write-up and raw evidence
@@ -341,6 +429,13 @@ docs/       the full reverse-engineering write-up and raw evidence
   copyrighted work and are not covered by the license above. If you would rather not use a
   redistributed copy, [`tools/extract-blobs.sh`](tools/extract-blobs.sh) pulls them from firmware
   you own and `tools/build.sh` assembles an equivalent zip.
+- `DS2DesktopFix.apk` (the RRO, under `app/ds2-desktopfix-rro/`) is original work, built entirely
+  from the source in this repository, and is under the license in [`LICENSE`](LICENSE).
+  `Launcher3QuickStep.apk` in the release archive is **AOSP's Trebuchet, patched** — a handful of
+  bytecode edits (`app/ds2-launchfix/patch_smali.py` documents each one) applied to LineageOS's
+  build of it and re-signed with a throwaway key. Like the HAL binaries, the patched apk itself
+  is not committed — the git tree carries only the patch script and the build step that applies
+  it to a stock copy pulled from the phone.
 
 ## Credits
 

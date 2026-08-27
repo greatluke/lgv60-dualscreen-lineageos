@@ -1,0 +1,6 @@
+id=v60_ds2_launchfix
+name=LG V60 DS2 Taskbar Launch Fix
+version=v1.0
+versionCode=10
+author=tmmh
+description=Makes app icons on the Dual Screen taskbar actually launch. Patches three points in Trebuchet: the launch guard behind an aconfig flag this build does not ship, the overview branch that swallows clicks when a third-party launcher is home, and the external-display rule that routed every DS2 launch into a desk this hardware cannot create. Also disables connected-display taskbar auto-stash, which hid the taskbar with no handle to bring it back.

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Two separate resources, deliberately set in opposite directions.
+
+      config_isDesktopModeSupported gates DesktopModeHelper.isDeviceEligibleForDesktopMode(),
+      which is what lets DesktopTasksController engage on the Dual Screen and try to build a
+      desk. A desk is a freeform root task, createRootTask rejects windowingMode=5 on this
+      hardware (android.software.freeform_window_management is not declared), and the app launch
+      is then abandoned rather than falling back to a normal fullscreen launch. Setting it false
+      keeps desks from ever being attempted.
+
+      config_isDesktopModeDevOptionSupported gates whether the Window Management toggles are
+      offered in Developer options. Turning the first resource off also hides those toggles,
+      which removes the user's ability to switch desktop mode on and off from the UI. Setting
+      this one true puts them back, independently.
+    -->
+    <bool name="config_isDesktopModeSupported">false</bool>
+    <bool name="config_isDesktopModeDevOptionSupported">true</bool>
+</resources>

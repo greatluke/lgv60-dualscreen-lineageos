@@ -4,3 +4,17 @@ module/dualscreen-bridge.dex
 # Proprietary LG blobs are never committed -- see tools/extract-blobs.sh
 module/system/vendor/bin/
 module/system/vendor/lib64/
+
+# Built by tools/build.sh from app/ds2-desktopfix-rro and app/ds2-launchfix -- not committed for
+# the same reason the vendor blobs above aren't: they're binaries produced from source already in
+# the tree (the second one is also a large, patched third-party apk), not source themselves.
+module/system/product/overlay/DS2DesktopFix.apk
+module/system/system_ext/priv-app/Launcher3QuickStep/Launcher3QuickStep.apk
+
+# DS2 nav bar app build output and throwaway signing key
+app/ds2navbar/build/
+app/ds2navbar/*.jks
+
+# Throwaway signing keys for the RRO and the Trebuchet dex patch (the latter's build/ is
+# already covered by the blanket build/ rule above).
+app/ds2-desktopfix-rro/*.jks
