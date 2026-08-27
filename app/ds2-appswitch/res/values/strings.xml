@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DS2 App Switch</string>
+    <string name="service_description">Adds a button on each screen that sends the current app to the other one.</string>
+</resources>

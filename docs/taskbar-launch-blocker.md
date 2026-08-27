@@ -215,6 +215,92 @@ inside their own declaring class's own constructor.
 Confirmed on hardware: DS2 drawer now shows 5 columns with no labels; the main screen's own
 `DeviceProfile` (`numShownAllAppsColumns=5`, `allAppsIconTextSizePx=32.0px`) is unchanged.
 
+## DS2 stuck `mState=OFF` after every lock/unlock
+
+Even with everything above fixed, the DS2 came back black after any lock/unlock cycle (screen
+timeout, power button, or `input keyevent KEYCODE_POWER`), even though the accessory itself never
+lost power and the hinge state never changed. The panel needed a fresh attach cycle to work again.
+
+**Root cause**: the DS2 lives in its own `displayGroupId` (`1`, vs the built-in panel's `0`),
+confirmed via `dumpsys display`, and each `PowerGroup` tracks wakefulness independently
+(`dumpsys power`'s "Power Group User Activity" section). Waking the device only wakes the default
+group; nothing on this build ever wakes group 1, so it stays asleep indefinitely after the first
+lock, regardless of whether the accessory or the hinge did anything.
+
+Two plausible-looking fixes were tried and ruled out on hardware before the real one:
+
+- `CoverDisplayPowerBridge`-style off/on HAL toggle of the accessory: succeeds at the HAL/HPD
+  level (`cover power-on result: 1`), but never moves the framework's display state. The DP link
+  itself was never the problem.
+- `cmd power set-wakelock acquire -d <id> FULL_WAKE_LOCK`: the lock visibly attaches to the right
+  display in `dumpsys power`'s Wakelocks list, but its summary bit on that `PowerGroup` stays
+  zero and the display stays off — the shell command's bookkeeping doesn't route through the same
+  wake path a real call does.
+
+**The actual fix**, in `ScreenWakeWatcher.java`: poll `dumpsys power` for the device waking from
+sleep (no sysfs backlight node on this panel reliably reflects sleep state either, so this
+mirrors `BrightnessSync`'s polling approach), and when the DS2's `Display` is still `STATE_OFF`
+afterward, call `PowerManager.wakeUp(time, WAKE_REASON_DISPLAY_GROUP_TURNED_ON, tag, displayId)`
+directly — the same multi-display entry point `IPowerManager.wakeUpWithDisplayId` exists for.
+That alone moves the `PowerGroup`'s wakefulness to Awake, but by itself it doesn't count as user
+activity: the display's own screen-off timeout fires again within seconds because its last
+recorded activity timestamp is still whatever it was before sleep. The public `PowerManager`
+class only exposes `userActivity(long, int, int)` for the *default* display, so the hidden
+per-display overload, `IPowerManager.userActivity(int displayId, long, int, int)`, is called
+directly on the raw binder (`ServiceManager.getService("power")` + `IPowerManager.Stub
+.asInterface`) right after the wake call, to reset that display's own timeout clock too. Both
+calls are needed; either alone leaves the display dark again within a few seconds.
+
+One trap while testing this: `DisplayManager.getDisplays()` (no-arg) excludes a display that is
+currently `OFF`, which made an early version of the fix log "DS2 not currently enumerated" even
+though the display genuinely existed — `getDisplays(DisplayManager
+.DISPLAY_CATEGORY_ALL_INCLUDING_DISABLED)` finds it regardless of power state.
+
+Confirmed on hardware across repeated lock/wake cycles: the DS2 comes back on with its prior
+content intact, no re-attach needed.
+
+## App-switch button: sending the current app to the other screen
+
+There is no gesture on this build that moves a running app from one screen to the other — Stock
+has one, LOS has no equivalent. `app/ds2-appswitch` adds a small floating circular button to each
+screen (bottom-right corner) that sends whatever app is currently in front on *that* screen over
+to the other one.
+
+The actual move is one call, and not something invented for this: `IActivityTaskManager
+.moveRootTaskToDisplay(taskId, displayId)` is a real (if hidden) framework entry point for exactly
+this. The interesting part was getting a button onto the screen at all, and getting its tap back
+to a process privileged enough to make that call.
+
+**Adding the button couldn't be done from the root daemon.** `DualScreenBridgeDaemon` is a bare
+`app_process` started by init, not a real Zygote-forked app — and `WindowManagerService.Session`'s
+constructor looks the caller's pid up in ActivityManager's own process map, rejecting anything it
+doesn't recognize with `IllegalStateException: Unknown pid=... uid=0`. Root does not help: the
+check isn't a permission check, it's "is this pid a process AMS actually launched." (`ds2navbar`'s
+`NavBarAccessibilityService` hit and documented this exact wall first.) The fix is the same one
+`ds2navbar` uses: a real app process, specifically an `AccessibilityService` — a normal
+Zygote-launched process, so it passes the pid check, and its `TYPE_ACCESSIBILITY_OVERLAY` window
+type needs no `SYSTEM_ALERT_WINDOW` grant on top of that.
+
+**Getting the tap back to root couldn't be done by file or Binder.** A shared file doesn't work —
+Magisk's root context (`u:r:magisk:s0`) is denied `app_data_file`/`media_rw_data_file` access
+under SELinux, so "app writes a command file, root reads it" fails in every location tried.
+Registering a custom Binder service and calling it from the app needs a policy rule this project
+isn't adding. What does work, cleanly: a plain loopback TCP socket
+(`AppSwitchServer` in the daemon listens on `127.0.0.1:41889`; the app connects and writes one
+int, the displayId its button lives on). It needs nothing but the ordinary, install-time-granted
+`INTERNET` permission on the app's side, and nothing beyond opening the socket on the daemon's.
+
+`AppSwitchServer` picks the topmost *visible* root task on the tapped display
+(`getAllRootTaskInfosOnDisplay`) and moves it; `RootTaskInfo`/`IActivityTaskManager` are hidden,
+so both sides resolve them via reflection for the same android.jar-shadowing reason documented in
+`ScreenWakeWatcher`.
+
+One deployment trap: newly installed accessibility services are ignored device-wide
+("`Ignoring non-encryption-aware service`" in `AccessibilityManagerService`'s log) until the user
+unlocks the device once after boot — this is Direct Boot / FBE credential-lock behavior, not a
+bug specific to this app; every third-party accessibility service on the phone was equally stuck
+until the first unlock.
+
 ## Tooling notes
 
 - Launcher3 is signed 6a1bd8a4 -- its own key, NOT the platform cert (852a750c), and has no

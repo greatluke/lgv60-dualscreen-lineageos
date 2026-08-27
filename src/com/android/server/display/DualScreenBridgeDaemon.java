@@ -1,5 +1,6 @@
 package com.android.server.display;
 
+import android.app.ActivityThread;
 import android.content.Context;
 import android.graphics.Rect;
 import android.hardware.display.ICoverDisplayEnabledCallback;
@@ -44,6 +45,12 @@ public class DualScreenBridgeDaemon {
         ServiceManager.addService(SERVICE_NAME, new BinderServiceEx(controller));
         Slog.i(TAG, "registered '" + SERVICE_NAME + "'");
 
+        // Obtained early (rather than down by ScreenWakeWatcher's original call site) because
+        // the attach listener below also needs it, and registration order matters here: this
+        // requires Looper.prepareMainLooper() to have already run on this exact thread, which is
+        // true from this point on but was not true before it.
+        Context systemContext = ActivityThread.systemMain().getSystemContext();
+
         // Stand in for Stock's CoverDisplayPowerManagerService, which LOS does not ship.
         // Without this nothing ever drives IAccessory.setCoverDisplayButtonStatus(), so the
         // hinge fires in the kernel but the DS2 is never powered. See CoverDisplayPowerBridge.
@@ -87,6 +94,23 @@ public class DualScreenBridgeDaemon {
         // Cover the case where the DS2 was already attached before this daemon started, which
         // is the normal situation at boot -- no attach event will arrive for it.
         TouchEnabler.enableTouchReporting();
+
+        // DisplayRotationFix.watch() covers re-applying itself on every future attach (the
+        // DS2's displayId is not stable across attaches, observed as 2, 3, 4) via its own
+        // DisplayManager.DisplayListener -- no need to hook it into the accessory attach
+        // listener above as well.
+        DisplayRotationFix.watch(systemContext);
+
+        // The DS2 lives in its own display group, separate from the built-in panel's, and each
+        // group tracks wakefulness independently. Waking the device from sleep only wakes the
+        // default group, so the DS2's Display can be left stuck OFF after any lock/unlock cycle
+        // even though the accessory never lost power. See ScreenWakeWatcher for how this was
+        // diagnosed and why it calls PowerManager.wakeUp() directly rather than touching the HAL.
+        ScreenWakeWatcher.start(systemContext);
+
+        // The "switch app to the other screen" feature (AppSwitchServer + app/ds2-appswitch) is
+        // shelved for now to prioritize the DS2 rotation fix -- it worked (confirmed on
+        // hardware), but is parked rather than started here. See AppSwitchServer's javadoc.
 
         // Android's brightness slider only drives the built-in panel, so mirror it onto the
         // DS2 to keep the two matched from the normal UI.
