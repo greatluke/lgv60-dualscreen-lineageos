@@ -56,6 +56,12 @@ import java.lang.reflect.Method;
  * {@code IPowerManager.userActivity(int displayId, long, int, int)} overload that targets a
  * specific display's group has no public wrapper, so it's called directly on the raw binder via
  * reflection, immediately after the wakeUp() call, to reset that group's timeout clock too.
+ *
+ * This watches for the whole *device* waking, which also fires when the case is folded shut
+ * (the built-in panel's own lock/wake cycle is unrelated to the hinge). Without checking the
+ * hinge first, this would immediately re-wake a DS2 that {@link Ds2PanelPower#powerOff} just
+ * deliberately put to sleep, defeating that fix outright -- so {@code coverPower} is passed in
+ * purely to ask {@link CoverDisplayPowerBridge#isCaseOpen()} before touching the DS2 at all.
  */
 public final class ScreenWakeWatcher {
 
@@ -77,13 +83,13 @@ public final class ScreenWakeWatcher {
      * main thread already prepares one for its own event loop, so the context is obtained there
      * and handed in, rather than each retried here on this background thread, which has none.
      */
-    public static void start(Context context) {
-        Thread t = new Thread(() -> loop(context), "ds2-wake-watcher");
+    public static void start(Context context, CoverDisplayPowerBridge coverPower) {
+        Thread t = new Thread(() -> loop(context, coverPower), "ds2-wake-watcher");
         t.setDaemon(true);
         t.start();
     }
 
-    private static void loop(Context context) {
+    private static void loop(Context context, CoverDisplayPowerBridge coverPower) {
         Slog.i(TAG, "started");
         boolean wasAwake = true;   // assume awake at daemon start; boot already handles attach
 
@@ -91,8 +97,12 @@ public final class ScreenWakeWatcher {
             try {
                 boolean awake = isAwake();
                 if (awake && !wasAwake) {
-                    Slog.i(TAG, "device woke up; checking DS2 display power");
-                    onWake(context);
+                    if (coverPower.isCaseOpen()) {
+                        Slog.i(TAG, "device woke up; checking DS2 display power");
+                        onWake(context);
+                    } else {
+                        Slog.i(TAG, "device woke up but the case is folded shut; leaving DS2 off");
+                    }
                 }
                 wasAwake = awake;
                 Thread.sleep(POLL_MS);

@@ -70,11 +70,20 @@ public class DualScreenBridgeDaemon {
                 controller, new android.os.Handler(Looper.getMainLooper()));
         renderer.start();
 
-        // The strip is only visible while the case is shut, so let the hinge gate it.
+        // The strip is only visible while the case is shut, so let the hinge gate it. The main
+        // panel gets the opposite treatment: it has no reason to stay lit while folded shut and
+        // unusable, and doing so was a real, needless battery drain -- see Ds2PanelPower's
+        // javadoc for why this is a separate, Android-display-level power path from the strip's
+        // own HAL-level one, rather than reusing the same accessory power toggle for both.
         coverPower.setCoverStateListener(new CoverDisplayPowerBridge.CoverStateListener() {
             @Override
             public void onCoverClosedChanged(boolean closed) {
                 renderer.setCoverClosed(closed);
+                if (closed) {
+                    Ds2PanelPower.powerOff(systemContext);
+                } else {
+                    Ds2PanelPower.powerOn(systemContext);
+                }
             }
         });
 
@@ -106,7 +115,11 @@ public class DualScreenBridgeDaemon {
         // default group, so the DS2's Display can be left stuck OFF after any lock/unlock cycle
         // even though the accessory never lost power. See ScreenWakeWatcher for how this was
         // diagnosed and why it calls PowerManager.wakeUp() directly rather than touching the HAL.
-        ScreenWakeWatcher.start(systemContext);
+        //
+        // coverPower is passed in so the watcher can check the hinge before waking the DS2: it
+        // reacts to the whole *device* waking, which also fires when the case is folded shut, and
+        // without this check it would immediately undo Ds2PanelPower.powerOff() above every time.
+        ScreenWakeWatcher.start(systemContext, coverPower);
 
         // The "switch app to the other screen" feature (AppSwitchServer + app/ds2-appswitch) is
         // shelved for now to prioritize the DS2 rotation fix -- it worked (confirmed on

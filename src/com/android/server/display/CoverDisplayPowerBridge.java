@@ -81,6 +81,16 @@ public class CoverDisplayPowerBridge {
     }
 
     /**
+     * Whether the hinge is currently open (or not yet known). {@code -1} (no hinge event seen
+     * yet this boot) is treated as open -- the common case is the case already being open at
+     * boot, and defaulting to "open" means {@link ScreenWakeWatcher} does not withhold waking
+     * the DS2 on a freshly booted device just because no SMARTCOVER event has arrived yet.
+     */
+    public boolean isCaseOpen() {
+        return mSmartCoverState != 1;
+    }
+
+    /**
      * Notified when the DS2 itself attaches, so its digitizer can be taken out of LPWG mode.
      * The controller comes up gesture-only on every attach, so this has to run each time and
      * not once at startup.
