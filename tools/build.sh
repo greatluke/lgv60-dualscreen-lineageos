@@ -11,7 +11,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build"
 MODULE="$ROOT/module"
-ZIP="$ROOT/lge_ds2_hal_shim.zip"
+# Versioned to match what the README tells users to expect from the Releases page
+# (lge_ds2_hal_shim-vX.Y.zip) -- read from module.prop so this can't drift out of sync with it.
+MODULE_VERSION="$(sed -n 's/^version=//p' "$MODULE/module.prop")"
+ZIP="$ROOT/lge_ds2_hal_shim-${MODULE_VERSION}.zip"
 
 # d8 from Android build-tools.
 D8="${D8:-$(ls -d "${ANDROID_SDK:-$HOME/Android/Sdk}"/build-tools/*/d8 2>/dev/null | sort -V | tail -1 || true)}"

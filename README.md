@@ -105,9 +105,9 @@ for the full derivation.
 
 Requires an LG V60 ThinQ (`timelm`) running LineageOS, rooted with Magisk.
 
-1. Get `lge_ds2_hal_shim-v0.3.zip` — from the Releases page, or build it yourself (below)
+1. Get `lge_ds2_hal_shim-v0.4.zip` — from the Releases page, or build it yourself (below)
 2. Install it: Magisk app → Modules → Install from storage, or
-   `adb shell su -c 'magisk --install-module /sdcard/Download/lge_ds2_hal_shim-v0.3.zip'`
+   `adb shell su -c 'magisk --install-module /sdcard/Download/lge_ds2_hal_shim-v0.4.zip'`
 3. Reboot
 
 That single zip is everything — the overlay and the patched launcher it carries are placed into
