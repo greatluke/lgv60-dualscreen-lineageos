@@ -197,6 +197,23 @@ and it comes up with the display prompt:
 
 ## Changelog
 
+**v0.4** (2026-08-28)
+
+- **DS2 no longer goes dark after lock/unlock** — the DS2 lives in its own display group with
+  its own wakefulness, and nothing ever woke it back up after the device slept, even though the
+  accessory itself never lost power. Fixed by waking that display group directly and resetting
+  its activity timeout, the same way the built-in panel's own wake path does. See
+  [`docs/taskbar-launch-blocker.md`](docs/taskbar-launch-blocker.md) for the diagnosis and the
+  two approaches that were tried and ruled out first
+- **DS2 rotates with the app, not stuck on one orientation** — the DS2 was permanently pinned to
+  a single rotation regardless of what was on screen (a fullscreen video, for instance, never
+  went landscape), because LineageOS only ever marks the built-in panel as "rotates with
+  content." Overridden per-display at runtime, with no framework patch needed
+- **DS2 powers off when the case folds shut** — previously only the outer cover strip reacted to
+  the hinge; the DS2's main panel stayed fully lit the entire time the accessory was attached,
+  fold or not, which was a real, needless battery drain. The two are now always exact opposites:
+  case closed → strip on, DS2 panel off; case open → strip off, DS2 panel on
+
 **v0.3** (2026-08-26)
 
 - **Launching apps on the DS2** — tapping an icon in the DS2 taskbar's app drawer used to do

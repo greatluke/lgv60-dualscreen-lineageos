@@ -1,6 +1,6 @@
 id=lge_ds2_hal_shim
 name=LG V60 Dual Screen (DS2)
-version=v0.3
-versionCode=3
+version=v0.4
+versionCode=4
 author=greatluke
-description=Full LG Dual Screen (DS2) support for LineageOS on the V60 ThinQ. Deploys the stock LG dual-screen, accessory and coverdisplay HIDL HALs with their vendor library closures and VINTF fragments, plus DualScreenBridgeDaemon (exposes IDisplayManagerEx as "dualscreen_ex") and CoverDisplayPowerBridge (hinge-driven DS2 power sequencing). Also makes the desktop-experience Taskbar work on the DS2: a static RRO stops DesktopTasksController from building a freeform desk this hardware can't create, and a Trebuchet dex patch makes app icons on the DS2 taskbar launch, removes the mirrored hotseat folders from the DS2 taskbar only, and fixes its home button. Cover window, second-screen touch, dual-screen screenshots, brightness tracking, app launching and navigation all work.
+description=Full LG Dual Screen (DS2) support for LineageOS on the V60 ThinQ. Deploys the stock LG dual-screen, accessory and coverdisplay HIDL HALs with their vendor library closures and VINTF fragments, plus DualScreenBridgeDaemon (exposes IDisplayManagerEx as "dualscreen_ex") and CoverDisplayPowerBridge (hinge-driven DS2 power sequencing). Also makes the desktop-experience Taskbar work on the DS2: a static RRO stops DesktopTasksController from building a freeform desk this hardware can't create, and a Trebuchet dex patch makes app icons on the DS2 taskbar launch, removes the mirrored hotseat folders from the DS2 taskbar only, and fixes its home button. The DS2 now survives a lock/unlock cycle without going dark, rotates with the foreground app instead of staying pinned to one orientation, and powers off automatically when the case folds shut instead of draining battery while unused. Cover window, second-screen touch, dual-screen screenshots, brightness tracking, app launching and navigation all work.

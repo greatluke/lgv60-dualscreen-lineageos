@@ -26,14 +26,30 @@ FRAMEWORK_JAR="${FRAMEWORK_JAR:-}"
 ANDROID_JAR="${ANDROID_JAR:-$(ls -d "${ANDROID_SDK:-$HOME/Android/Sdk}"/platforms/*/android.jar 2>/dev/null | sort -V | tail -1 || true)}"
 [ -n "$FRAMEWORK_JAR" ] || { echo "Set FRAMEWORK_JAR to a classes-format framework/services jar (see comment above)" >&2; exit 1; }
 
+# SubLcdController and DualScreenBridgeDaemon's BinderServiceEx also need LG's own
+# AIDL-derived interfaces (IDisplayManagerEx, ISubDisplayCallback, IDualScreenSubDisplayCallback,
+# ICoverDisplayEnabledCallback, IHBMCallback, IDsAirDisplayStateCallback, and the HIDL base
+# classes) that stock framework/services.jar does not carry at all -- LOS never shipped LG's
+# dual-screen framework surface. STUBS points at a source tree providing them; only the ones
+# actually referenced get compiled in (no collision with this project's own same-named classes,
+# since explicit compile targets always win over sourcepath-resolved ones).
+STUBS="${STUBS:-}"
+[ -n "$STUBS" ] || { echo "Set STUBS=/path/to/dualscreen-port/src (LG's AIDL-derived interface stubs)" >&2; exit 1; }
+
 rm -rf "$OUT" && mkdir -p "$OUT/classes" "$OUT/dex"
 
 echo "== compiling =="
-javac -nowarn -cp "$ANDROID_JAR:$FRAMEWORK_JAR" -d "$OUT/classes" \
+javac -nowarn -cp "$ANDROID_JAR:$FRAMEWORK_JAR" -sourcepath "$ROOT/src:$STUBS" -d "$OUT/classes" \
 	$(find "$ROOT/src" -name '*.java')
 
 echo "== dexing =="
-"$D8" --lib "$FRAMEWORK_JAR" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
+# d8 needs one --lib per jar; it does not accept a colon-joined path the way javac's -cp does.
+D8_LIBS=()
+IFS=':' read -ra _fw_jars <<< "$FRAMEWORK_JAR"
+for jar in "${_fw_jars[@]}"; do
+	D8_LIBS+=(--lib "$jar")
+done
+"$D8" "${D8_LIBS[@]}" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
 cp "$OUT/dex/classes.dex" "$MODULE/dualscreen-bridge.dex"
 
 echo "== building the DS2 desktop-experience fix (RRO + patched Trebuchet) =="
