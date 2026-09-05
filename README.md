@@ -114,6 +114,13 @@ That single zip is everything — the overlay and the patched launcher it carrie
 `/product` and `/system_ext` by the module itself at boot. There is no separate APK to install,
 open, or grant permissions to.
 
+**On KernelSU / ReSukiSU instead of Magisk**: the module itself is compatible as-is — its
+`module.prop`, boot scripts, and `resetprop` usage all work identically. The one thing to know:
+KernelSU only mounts a module's `system/` directory (which is how this module actually delivers
+the vendor blobs, RRO, and patched launcher) if a metamodule such as
+[`meta-overlayfs`](https://kernelsu.org/guide/metamodule.html) is also installed — without one,
+the module installs and its scripts run, but nothing under `/system` takes effect.
+
 Verify:
 
 ```sh
